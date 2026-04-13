@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: leadscout_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: leadscout
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: leadscout_app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/leadscout
+      CRAWLER_API_URL: http://crawler:8000
+      CRAWLER_API_KEY: change-me-in-production
+    ports:
+      - "3000:3000"
+
+  crawler:
+    build:
+      context: ./crawler
+      dockerfile: Dockerfile
+    container_name: leadscout_crawler
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/leadscout
+      CRAWLER_API_KEY: change-me-in-production
+      CRAWLER_DELAY_SECONDS: "2"
+      CRAWLER_MAX_CONCURRENT: "3"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./crawler/output:/app/output
+      - ./crawler/logs:/app/logs
+
+volumes:
+  postgres_data:

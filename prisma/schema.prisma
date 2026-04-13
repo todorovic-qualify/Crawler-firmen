@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LeadTemperatur {
+  HEISS
+  WARM
+  KALT
+}
+
+enum LeadStatus {
+  NEU
+  KONTAKTIERT
+  INTERESSIERT
+  ABGESCHLOSSEN
+  UNGEEIGNET
+}
+
+model Unternehmen {
+  id                  String          @id @default(cuid())
+  name                String
+  kategorie           String?
+  beschreibung        String?
+  adresse             String?
+  stadt               String?
+  postleitzahl        String?
+  telefon             String?
+  email               String?
+  webseite            String?
+  quelleUrl           String?         @map("quelle_url")
+  bewertung           Float?
+  bewertungsanzahl    Int?            @map("bewertungs_anzahl")
+  oeffnungszeiten     String?         @map("oeffnungszeiten")
+
+  // Social Media
+  instagram           String?
+  facebook            String?
+  linkedin            String?
+  whatsapp            String?
+
+  // Lead-Scoring
+  leadScore           Int             @default(0) @map("lead_score")
+  leadTemperatur      LeadTemperatur  @default(KALT) @map("lead_temperatur")
+  webseiteBedarfScore Int             @default(0) @map("webseite_bedarf_score")
+  automationBedarfScore Int           @default(0) @map("automation_bedarf_score")
+  wahrscheinlicheSchmerzpunkte String? @map("wahrscheinliche_schmerzpunkte")
+  empfohleneAngebote  String?         @map("empfohlene_angebote")
+  verkaufswinkel      String?         @map("verkaufs_winkel")
+  heissLeadGrund      String?         @map("heiss_lead_grund")
+  scoreErklaerung     String?         @map("score_erklaerung")
+
+  // Entscheidungsträger
+  entscheidungstraegerName String?    @map("entscheidungstraeger_name")
+  rechtlicherName     String?         @map("rechtlicher_name")
+
+  // Zusammenfassung
+  zusammenfassung     String?
+  leistungen          String?
+
+  // Flags
+  hatWebseite         Boolean         @default(false) @map("hat_webseite")
+  hatEmail            Boolean         @default(false) @map("hat_email")
+  hatTelefon          Boolean         @default(false) @map("hat_telefon")
+
+  // CRM Status
+  status              LeadStatus      @default(NEU)
+  notizen             String?
+  erstesKontaktnachricht String?      @map("erstes_kontaktnachricht")
+
+  // Beziehungen
+  webseitenAnalyse    WebseitenAnalyse?
+  suchauftrag         Suchauftrag?    @relation(fields: [suchauftragId], references: [id])
+  suchauftragId       String?         @map("suchauftrag_id")
+
+  erstelltAm          DateTime        @default(now()) @map("erstellt_am")
+  aktualisiertAm      DateTime        @updatedAt @map("aktualisiert_am")
+
+  @@map("unternehmen")
+}
+
+model WebseitenAnalyse {
+  id                  String      @id @default(cuid())
+  unternehmenId       String      @unique @map("unternehmen_id")
+
+  startseiteTitle     String?     @map("startseite_title")
+  metaBeschreibung    String?     @map("meta_beschreibung")
+  gecrawlteSeiten     String[]    @map("gecrawlte_seiten")
+
+  kontaktformularGefunden  Boolean @default(false) @map("kontaktformular_gefunden")
+  ctaGefunden         Boolean     @default(false) @map("cta_gefunden")
+  buchungsSignalGefunden Boolean  @default(false) @map("buchungs_signal_gefunden")
+  whatsappGefunden    Boolean     @default(false) @map("whatsapp_gefunden")
+  socialLinksGefunden String[]    @map("social_links_gefunden")
+
+  siehtVeraltetAus    Boolean     @default(false) @map("sieht_veraltet_aus")
+  mobilSignale        String?     @map("mobil_signale")
+  technologieStack    String?     @map("technologie_stack")
+
+  impressumText       String?     @map("impressum_text")
+  ueberUnsText        String?     @map("ueber_uns_text")
+  leistungenText      String?     @map("leistungen_text")
+
+  webseiteQualitaetScore Int      @default(0) @map("webseite_qualitaet_score")
+
+  unternehmen         Unternehmen @relation(fields: [unternehmenId], references: [id], onDelete: Cascade)
+
+  erstelltAm          DateTime    @default(now()) @map("erstellt_am")
+
+  @@map("webseiten_analyse")
+}
+
+model Suchauftrag {
+  id              String      @id @default(cuid())
+  ort             String
+  radiusKm        Int?        @map("radius_km")
+  kategorien      String[]
+  maxErgebnisse   Int         @default(100) @map("max_ergebnisse")
+  status          String      @default("ausstehend")
+  gesamtGefunden  Int         @default(0) @map("gesamt_gefunden")
+  gesamtVerarbeitet Int       @default(0) @map("gesamt_verarbeitet")
+  fehlerMeldung   String?     @map("fehler_meldung")
+
+  unternehmen     Unternehmen[]
+
+  erstelltAm      DateTime    @default(now()) @map("erstellt_am")
+  aktualisiertAm  DateTime    @updatedAt @map("aktualisiert_am")
+
+  @@map("suchauftrag")
+}
