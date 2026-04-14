@@ -1,10 +1,9 @@
 """
 Datenbankschreiber: Schreibt Crawler-Ergebnisse direkt in PostgreSQL.
-Verwendet psycopg2 mit den Tabellennamen aus dem Prisma-Schema.
+Tabellen- und Spaltennamen entsprechen dem Prisma-Schema (@map-Deklarationen).
 """
 from __future__ import annotations
 
-import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -22,15 +21,14 @@ def _jetzt() -> datetime:
 
 
 def _neue_id() -> str:
-    """CUID-ähnliche ID (kompatibel mit Prisma cuid())."""
+    """Prisma-kompatibler cuid-ähnlicher String."""
     return "c" + uuid.uuid4().hex[:23]
 
 
 def verbinde() -> psycopg2.extensions.connection:
-    """Stellt Datenbankverbindung her."""
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
-        raise ValueError("DATABASE_URL nicht gesetzt")
+        raise ValueError("DATABASE_URL ist nicht gesetzt")
     return psycopg2.connect(db_url)
 
 
@@ -41,7 +39,6 @@ def erstelle_suchauftrag(
     kategorien: list[str],
     max_ergebnisse: int,
 ) -> str:
-    """Erstellt einen neuen Suchauftrag und gibt seine ID zurück."""
     auftrag_id = _neue_id()
     jetzt = _jetzt()
     with conn.cursor() as cur:
@@ -67,7 +64,6 @@ def aktualisiere_suchauftrag(
     gesamt_verarbeitet: int,
     fehler: Optional[str] = None,
 ) -> None:
-    """Aktualisiert den Status eines Suchauftrags."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -86,7 +82,11 @@ def speichere_unternehmen(
     u: Unternehmen,
     auftrag_id: Optional[str] = None,
 ) -> str:
-    """Speichert ein Unternehmen in der Datenbank. Gibt die ID zurück."""
+    """
+    Speichert ein Unternehmen + optionale Webseitenanalyse.
+    Gibt die neue ID zurück.
+    Doppelte Namen+Stadt werden übersprungen (ON CONFLICT DO NOTHING).
+    """
     u_id = _neue_id()
     jetzt = _jetzt()
 
@@ -98,13 +98,17 @@ def speichere_unternehmen(
               telefon, email, webseite, quelle_url,
               bewertung, bewertungs_anzahl, oeffnungszeiten,
               instagram, facebook, linkedin, whatsapp,
+
               lead_score, lead_temperatur,
               webseite_bedarf_score, automation_bedarf_score, webseite_qualitaet_score,
+
               wahrscheinliche_schmerzpunkte, empfohlene_angebote,
               verkaufs_winkel, heiss_lead_grund, score_erklaerung,
               erstes_kontaktnachricht, pitch_winkel,
+
               entscheidungstraeger_name, rechtlicher_name,
               zusammenfassung, leistungen,
+
               hat_webseite, hat_email, hat_telefon,
               status, notizen,
               suchauftrag_id, erstellt_am, aktualisiert_am
@@ -113,39 +117,51 @@ def speichere_unternehmen(
               %s,%s,%s,%s,
               %s,%s,%s,
               %s,%s,%s,%s,
+
+              %s,%s::\"LeadTemperatur\",
+              %s,%s,%s,
+
               %s,%s,
               %s,%s,%s,
               %s,%s,
+
+              %s,%s,
+              %s,%s,
+
               %s,%s,%s,
-              %s,%s,
-              %s,%s,
-              %s,%s,
-              %s,%s,%s,
-              %s,%s,
+              %s::\"LeadStatus\",%s,
               %s,%s,%s
             )
             ON CONFLICT DO NOTHING
+            RETURNING id
             """,
             (
                 u_id, u.name, u.kategorie, u.beschreibung, u.adresse, u.stadt, u.postleitzahl,
                 u.telefon, u.email, u.webseite, u.quelle_url,
                 u.bewertung, u.bewertungsanzahl, u.oeffnungszeiten,
                 u.instagram, u.facebook, u.linkedin, u.whatsapp,
+
                 u.lead_score, u.lead_temperatur,
                 u.webseite_bedarf_score, u.automation_bedarf_score, u.webseite_qualitaet_score,
+
                 u.wahrscheinliche_schmerzpunkte, u.empfohlene_angebote,
                 u.verkaufs_winkel, u.heiss_lead_grund, u.score_erklaerung,
                 u.erstes_kontaktnachricht, u.pitch_winkel,
+
                 u.entscheidungstraeger_name, u.rechtlicher_name,
                 u.zusammenfassung, u.leistungen,
+
                 u.hat_webseite, u.hat_email, u.hat_telefon,
-                "NEU", u.__dict__.get("notizen"),
+                "NEU", None,
                 auftrag_id, jetzt, jetzt,
             ),
         )
+        row = cur.fetchone()
+        # ON CONFLICT → row ist None, dann trotzdem u_id zurückgeben
+        gespeicherte_id = row[0] if row else u_id
 
-        # Webseitenanalyse
-        if u.webseiten_analyse:
+        # Webseitenanalyse speichern (wenn vorhanden und Unternehmen neu eingefügt)
+        if u.webseiten_analyse and row:
             a = u.webseiten_analyse
             a_id = _neue_id()
             cur.execute(
@@ -165,17 +181,25 @@ def speichere_unternehmen(
                 ON CONFLICT (unternehmen_id) DO NOTHING
                 """,
                 (
-                    a_id, u_id,
-                    a.startseite_title, a.meta_beschreibung,
+                    a_id, gespeicherte_id,
+                    a.startseite_title,
+                    a.meta_beschreibung,
                     a.gecrawlte_seiten,
-                    a.kontaktformular_gefunden, a.cta_gefunden,
-                    a.buchungs_signal_gefunden, a.whatsapp_gefunden,
-                    a.social_links_gefunden, a.sieht_veraltet_aus,
-                    a.mobil_signale, a.technologie_stack,
-                    a.impressum_text, a.ueber_uns_text, a.leistungen_text,
-                    a.webseite_qualitaet_score, jetzt,
+                    a.kontaktformular_gefunden,
+                    a.cta_gefunden,
+                    a.buchungs_signal_gefunden,
+                    a.whatsapp_gefunden,
+                    a.social_links_gefunden,
+                    a.sieht_veraltet_aus,
+                    a.mobil_signale,
+                    a.technologie_stack,
+                    a.impressum_text,
+                    a.ueber_uns_text,
+                    a.leistungen_text,
+                    a.webseite_qualitaet_score,
+                    jetzt,
                 ),
             )
 
     conn.commit()
-    return u_id
+    return gespeicherte_id
