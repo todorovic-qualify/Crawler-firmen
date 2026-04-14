@@ -124,6 +124,9 @@ class Unternehmen:
     hat_email: bool = False
     hat_telefon: bool = False
 
+    # DB-Status (LeadStatus-Enum)
+    status: str = "NEU"
+
     # Scoring (wird vom Scorer befüllt)
     lead_score: int = 0
     lead_temperatur: str = "KALT"

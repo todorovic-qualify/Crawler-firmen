@@ -92,6 +92,11 @@ def reichere_an(unternehmen: Unternehmen) -> Unternehmen:
     if not unternehmen.webseite:
         # Auch ohne Website: Branchen + sichtbare Schwächen setzen
         befund = AnreicherungsBefund()
+        befund.branchen = leite_branchen_ab(unternehmen.kategorie, "")
+        befund.konversions_qualitaet = "fehlt"
+        befund.fehlt_cta = True
+        befund.fehlt_buchungsoptimierung = True
+        befund.kein_ai_automation_signal = True
         befund.sichtbare_schwaechen = identifiziere_sichtbare_schwaechen(
             hat_webseite=False,
             cta_gefunden=False, kontaktformular_gefunden=False,
@@ -100,11 +105,7 @@ def reichere_an(unternehmen: Unternehmen) -> Unternehmen:
             fehlt_mobile_viewport=False, fehlt_ssl=False,
             baukastenseite=False, schwache_struktur=False,
         )
-        befund.branchen = leite_branchen_ab(unternehmen.kategorie, "")
-        befund.konversions_qualitaet = "fehlt"
-        befund.fehlt_cta = True
-        befund.fehlt_buchungsoptimierung = True
-        befund.kein_ai_automation_signal = True
+        unternehmen.wahrscheinliche_schmerzpunkte = "; ".join(befund.sichtbare_schwaechen[:3]) or None
         unternehmen.anreicherungs_befund = befund
         return unternehmen
 
@@ -123,6 +124,22 @@ def reichere_an(unternehmen: Unternehmen) -> Unternehmen:
         startseite_html = _lade_seite(basis_url, client)
         if not startseite_html:
             logger.warning(f"Startseite nicht erreichbar: {basis_url}")
+            befund.branchen = leite_branchen_ab(unternehmen.kategorie, "")
+            befund.sichtbare_schwaechen = identifiziere_sichtbare_schwaechen(
+                hat_webseite=True,  # URL vorhanden, aber Seite nicht erreichbar
+                cta_gefunden=False, kontaktformular_gefunden=False,
+                buchungs_signal_gefunden=False, whatsapp_gefunden=False,
+                chat_widget_gefunden=False, sieht_veraltet_aus=False,
+                fehlt_mobile_viewport=False, fehlt_ssl=befund.fehlt_ssl,
+                baukastenseite=False, schwache_struktur=False,
+            )
+            befund.konversions_qualitaet = "fehlt"
+            befund.fehlt_cta = True
+            befund.fehlt_buchungsoptimierung = True
+            befund.kein_ai_automation_signal = True
+            unternehmen.wahrscheinliche_schmerzpunkte = "; ".join(befund.sichtbare_schwaechen[:3]) or None
+            unternehmen.anreicherungs_befund = befund
+            unternehmen.webseiten_analyse = _befund_zu_db_analyse(befund)
             return unternehmen
 
         befund.gecrawlte_seiten.append(basis_url)
@@ -293,6 +310,11 @@ def reichere_an(unternehmen: Unternehmen) -> Unternehmen:
 
     # ── Phase 5: Qualitätsscore ───────────────────────────────────────────────
     befund.webseite_qualitaet_score, befund.qualitaet_erklaerung = _berechne_qualitaet(befund)
+
+    # [HEURISTIK] Schmerzpunkte vorausfüllen aus sichtbaren Schwächen
+    # (Scorer kann dies später mit präziserem Text überschreiben)
+    if befund.sichtbare_schwaechen and not unternehmen.wahrscheinliche_schmerzpunkte:
+        unternehmen.wahrscheinliche_schmerzpunkte = "; ".join(befund.sichtbare_schwaechen[:3])
 
     # Befund ans Unternehmen hängen
     unternehmen.anreicherungs_befund = befund

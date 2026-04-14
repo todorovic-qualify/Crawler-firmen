@@ -152,7 +152,7 @@ def speichere_unternehmen(
                 u.zusammenfassung, u.leistungen,
 
                 u.hat_webseite, u.hat_email, u.hat_telefon,
-                "NEU", None,
+                u.status, None,
                 auftrag_id, jetzt, jetzt,
             ),
         )
@@ -203,3 +203,112 @@ def speichere_unternehmen(
 
     conn.commit()
     return gespeicherte_id
+
+
+def aktualisiere_unternehmen(
+    conn,
+    u_id: str,
+    u: Unternehmen,
+) -> None:
+    """
+    Aktualisiert Anreicherungs- und Scoring-Felder eines bestehenden Eintrags.
+    Wird verwendet wenn ON CONFLICT ausgelöst wurde (Eintrag bereits vorhanden).
+    """
+    jetzt = _jetzt()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE unternehmen SET
+              email=%s, telefon=%s, webseite=%s,
+              instagram=%s, facebook=%s, linkedin=%s, whatsapp=%s,
+              hat_webseite=%s, hat_email=%s, hat_telefon=%s,
+
+              lead_score=%s, lead_temperatur=%s::\"LeadTemperatur\",
+              webseite_bedarf_score=%s, automation_bedarf_score=%s,
+              webseite_qualitaet_score=%s,
+
+              wahrscheinliche_schmerzpunkte=%s, empfohlene_angebote=%s,
+              verkaufs_winkel=%s, heiss_lead_grund=%s, score_erklaerung=%s,
+              erstes_kontaktnachricht=%s, pitch_winkel=%s,
+
+              entscheidungstraeger_name=%s, rechtlicher_name=%s,
+              zusammenfassung=%s, leistungen=%s,
+              aktualisiert_am=%s
+            WHERE id=%s
+            """,
+            (
+                u.email, u.telefon, u.webseite,
+                u.instagram, u.facebook, u.linkedin, u.whatsapp,
+                u.hat_webseite, u.hat_email, u.hat_telefon,
+
+                u.lead_score, u.lead_temperatur,
+                u.webseite_bedarf_score, u.automation_bedarf_score,
+                u.webseite_qualitaet_score,
+
+                u.wahrscheinliche_schmerzpunkte, u.empfohlene_angebote,
+                u.verkaufs_winkel, u.heiss_lead_grund, u.score_erklaerung,
+                u.erstes_kontaktnachricht, u.pitch_winkel,
+
+                u.entscheidungstraeger_name, u.rechtlicher_name,
+                u.zusammenfassung, u.leistungen,
+                jetzt,
+                u_id,
+            ),
+        )
+
+        # Webseitenanalyse upsert
+        if u.webseiten_analyse:
+            a = u.webseiten_analyse
+            a_id = _neue_id()
+            cur.execute(
+                """
+                INSERT INTO webseiten_analyse (
+                  id, unternehmen_id,
+                  startseite_title, meta_beschreibung, gecrawlte_seiten,
+                  kontaktformular_gefunden, cta_gefunden,
+                  buchungs_signal_gefunden, whatsapp_gefunden,
+                  social_links_gefunden, sieht_veraltet_aus,
+                  mobil_signale, technologie_stack,
+                  impressum_text, ueber_uns_text, leistungen_text,
+                  webseite_qualitaet_score, erstellt_am
+                ) VALUES (
+                  %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                )
+                ON CONFLICT (unternehmen_id) DO UPDATE SET
+                  startseite_title=EXCLUDED.startseite_title,
+                  meta_beschreibung=EXCLUDED.meta_beschreibung,
+                  gecrawlte_seiten=EXCLUDED.gecrawlte_seiten,
+                  kontaktformular_gefunden=EXCLUDED.kontaktformular_gefunden,
+                  cta_gefunden=EXCLUDED.cta_gefunden,
+                  buchungs_signal_gefunden=EXCLUDED.buchungs_signal_gefunden,
+                  whatsapp_gefunden=EXCLUDED.whatsapp_gefunden,
+                  social_links_gefunden=EXCLUDED.social_links_gefunden,
+                  sieht_veraltet_aus=EXCLUDED.sieht_veraltet_aus,
+                  mobil_signale=EXCLUDED.mobil_signale,
+                  technologie_stack=EXCLUDED.technologie_stack,
+                  impressum_text=EXCLUDED.impressum_text,
+                  ueber_uns_text=EXCLUDED.ueber_uns_text,
+                  leistungen_text=EXCLUDED.leistungen_text,
+                  webseite_qualitaet_score=EXCLUDED.webseite_qualitaet_score
+                """,
+                (
+                    a_id, u_id,
+                    a.startseite_title,
+                    a.meta_beschreibung,
+                    a.gecrawlte_seiten,
+                    a.kontaktformular_gefunden,
+                    a.cta_gefunden,
+                    a.buchungs_signal_gefunden,
+                    a.whatsapp_gefunden,
+                    a.social_links_gefunden,
+                    a.sieht_veraltet_aus,
+                    a.mobil_signale,
+                    a.technologie_stack,
+                    a.impressum_text,
+                    a.ueber_uns_text,
+                    a.leistungen_text,
+                    a.webseite_qualitaet_score,
+                    jetzt,
+                ),
+            )
+    conn.commit()
