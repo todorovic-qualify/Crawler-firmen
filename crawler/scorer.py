@@ -491,54 +491,118 @@ def bewerte(unternehmen: Unternehmen) -> Unternehmen:
     unternehmen.wahrscheinliche_schmerzpunkte = "; ".join(schmerzpunkte) if schmerzpunkte else "Keine spezifischen Schwächen identifiziert"
     unternehmen.empfohlene_angebote = ", ".join(dict.fromkeys(angebote)) if angebote else profil["hauptangebot"]
     unternehmen.verkaufs_winkel = profil["pitch"]
+    unternehmen.pitch_winkel = _was_zuerst_verkaufen(unternehmen, profil, angebote)
 
     if unternehmen.lead_temperatur == "HEISS":
-        unternehmen.heiss_lead_grund = _erstelle_heiss_grund(unternehmen, profil)
+        unternehmen.heiss_lead_grund = _erstelle_heiss_grund(unternehmen, profil, schmerzpunkte)
     elif unternehmen.lead_temperatur == "WARM":
-        unternehmen.heiss_lead_grund = f"Gute Verkaufschance: {', '.join(angebote[:2]) if angebote else profil['hauptangebot']}"
+        top = list(dict.fromkeys(angebote))[:2]
+        unternehmen.heiss_lead_grund = (
+            f"Gute Verkaufschance: {', '.join(top)}" if top else profil["hauptangebot"]
+        )
 
-    # Erstansprache generieren
-    unternehmen.erstes_kontaktnachricht = _erstelle_kontaktnachricht(unternehmen, profil)
-    unternehmen.pitch_winkel = profil["pitch"]
+    unternehmen.erstes_kontaktnachricht = _erstelle_kontaktnachricht(unternehmen, profil, angebote)
 
     return unternehmen
 
 
-def _erstelle_heiss_grund(u: Unternehmen, profil: dict) -> str:
+def _was_zuerst_verkaufen(u: Unternehmen, profil: dict, angebote: list[str]) -> str:
+    """Was ist das konkrete erste Angebot für diesen Lead?"""
+    if not u.hat_webseite:
+        return "Neue professionelle Webseite + Google-Sichtbarkeit"
+    q = u.webseite_qualitaet_score
+    if q < 30:
+        if profil["ki_telefon"] and profil["telefon_intensiv"]:
+            return "KI-Telefonagent (sofortiger ROI) + Website-Relaunch"
+        return "Website-Relaunch mit CTA, Kontaktformular und Mobile-Optimierung"
+    if profil["ki_telefon"] and profil["telefon_intensiv"]:
+        return "KI-Telefonagent – entlastet Rezeption sofort, keine IT-Kenntnisse nötig"
+    if profil["buchung_intensiv"] and profil["booking"]:
+        return "Online-Buchungssystem mit automatischen WhatsApp-Erinnerungen"
+    if (u.kategorie or "").lower() in _LEAD_ABHAENGIGE_KATEGORIEN:
+        return "Automatisches Lead-Follow-up – antwortet in unter 5 Minuten"
+    if profil["whatsapp"]:
+        return "WhatsApp-Buchungsbot – Kunden buchen direkt ohne Anruf"
+    if angebote:
+        return angebote[0]
+    return profil["hauptangebot"]
+
+
+def _erstelle_heiss_grund(u: Unternehmen, profil: dict, schmerzpunkte: list[str]) -> str:
+    """Konkrete Begründung warum dieser Lead heiß ist."""
     gründe = []
     if not u.hat_webseite:
-        gründe.append("kein Online-Auftritt")
+        gründe.append("kein Online-Auftritt – täglich unsichtbar für suchende Kunden")
     elif u.webseite_qualitaet_score < 30:
-        gründe.append("sehr schwache Website")
+        gründe.append(f"Website sehr schwach (Score {u.webseite_qualitaet_score}/100)")
+    elif u.webseite_qualitaet_score < 50:
+        gründe.append("Website ohne Conversion-Elemente – kein CTA, kein Formular")
     if profil["ki_telefon"] and profil["telefon_intensiv"]:
-        gründe.append("hohes KI-Telefonpotenzial")
-    if profil["buchung_intensiv"]:
-        gründe.append("Buchungsautomatisierung sofort einsetzbar")
+        gründe.append("telefon-intensive Branche ohne KI-Automatisierung")
+    if profil["buchung_intensiv"] and not (
+        u.anreicherungs_befund and u.anreicherungs_befund.buchungs_signal_gefunden
+    ):
+        gründe.append("Buchungsbetrieb ohne Online-Buchungssystem")
     if not u.hat_email:
-        gründe.append("digital schwer erreichbar")
-    return f"Heißer Lead: {', '.join(gründe)}" if gründe else "Hoher Automatisierungsbedarf in diesem Segment"
+        gründe.append("kein E-Mail-Kontakt – digital kaum erreichbar")
+    if (u.kategorie or "").lower() in _LEAD_ABHAENGIGE_KATEGORIEN:
+        gründe.append("Lead-Reaktionszeit entscheidend in dieser Branche")
+    if gründe:
+        return "Heißer Lead: " + " | ".join(gründe)
+    if schmerzpunkte:
+        return f"Lead-Score {u.lead_score}/100: {schmerzpunkte[0]}"
+    return f"Lead-Score {u.lead_score}/100 – {profil['hauptangebot']}"
 
 
-def _erstelle_kontaktnachricht(u: Unternehmen, profil: dict) -> str:
-    name = u.name
-    anrede = f"Hallo, ich habe Ihr Unternehmen {name} gefunden"
+def _erstelle_kontaktnachricht(u: Unternehmen, profil: dict, angebote: list[str]) -> str:
+    """Personalisierte Erstkontakt-Nachricht basierend auf echten Lead-Daten."""
+    vorname = ""
+    if u.entscheidungstraeger_name:
+        teile = u.entscheidungstraeger_name.strip().split()
+        vorname = teile[0] if teile else ""
+
+    anrede = f"Hallo{' ' + vorname if vorname else ''},"
+    ort_info = f" in {u.stadt}" if u.stadt else ""
+    erstes = angebote[0] if angebote else profil["hauptangebot"]
 
     if not u.hat_webseite:
         return (
-            f"{anrede} und gesehen, dass Sie noch keine eigene Webseite haben. "
-            f"Ich helfe lokalen Unternehmen dabei, online sichtbar zu werden und mehr Kunden zu gewinnen. "
-            f"Darf ich Ihnen kurz zeigen, was für Sie möglich wäre?"
+            f"{anrede}\n\n"
+            f"ich bin auf {u.name}{ort_info} aufmerksam geworden und habe gesehen, "
+            f"dass Sie noch keine eigene Webseite haben.\n\n"
+            f"Viele Ihrer Mitbewerber gewinnen über Google täglich neue Kunden. "
+            f"Eine professionelle Webseite würde auch Sie dort sichtbar machen – "
+            f"ohne großen Aufwand Ihrerseits.\n\n"
+            f"Darf ich Ihnen in einem kurzen Gespräch zeigen, was konkret möglich wäre?"
         )
-    elif u.lead_temperatur == "HEISS":
+
+    if u.webseite_qualitaet_score < 40:
+        befund = u.anreicherungs_befund
+        details = []
+        if befund:
+            if not befund.cta_gefunden:
+                details.append("kein klarer Handlungsaufruf")
+            if not befund.kontaktformular_gefunden and not befund.buchungs_signal_gefunden:
+                details.append("kein Buchungs- oder Kontaktsystem")
+            if befund.sieht_veraltet_aus:
+                details.append("veraltetes Design")
+            if befund.fehlt_mobile_viewport:
+                details.append("nicht mobiloptimiert")
+        detail_str = (", ".join(details) + " – ") if details else ""
         return (
-            f"{anrede} und Ihre Webseite analysiert. "
-            f"Ich sehe konkretes Potenzial: {profil['pitch']} "
+            f"{anrede}\n\n"
+            f"ich habe die Website von {u.name}{ort_info} kurz angeschaut. "
+            f"Sie haben {detail_str}da ist konkretes Verbesserungspotenzial.\n\n"
+            f"{profil['pitch']}\n\n"
+            f"Konkret würde ich Ihnen {erstes} vorschlagen. "
             f"Hätten Sie kurz Zeit für ein Gespräch?"
         )
-    else:
-        return (
-            f"{anrede}. "
-            f"{profil['pitch']} "
-            f"Ich würde Ihnen gerne zeigen wie das für Ihr Unternehmen aussehen könnte. "
-            f"Wann passt es Ihnen für ein kurzes Gespräch?"
-        )
+
+    return (
+        f"{anrede}\n\n"
+        f"ich bin auf {u.name}{ort_info} gestoßen und sehe eine passende Möglichkeit für Sie.\n\n"
+        f"{profil['pitch']}\n\n"
+        f"Ich würde Ihnen gerne {erstes} vorstellen – "
+        f"das funktioniert bei ähnlichen Unternehmen in Ihrer Branche bereits sehr gut.\n\n"
+        f"Wann passt es Ihnen für ein kurzes Gespräch?"
+    )
