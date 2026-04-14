@@ -441,3 +441,238 @@ def extrahiere_leistungen_liste(soup: BeautifulSoup) -> list[str]:
 def bereinige_text(text: str, max_zeichen: int = 500) -> str:
     bereinigt = " ".join(text.split())
     return bereinigt[:max_zeichen].rstrip() if len(bereinigt) > max_zeichen else bereinigt
+
+
+# ── Brancheneinordnung ────────────────────────────────────────────────────────
+
+# [HEURISTIK] Kategorie → Branchenbegriffe
+_KATEGORIE_BRANCHEN: dict[str, list[str]] = {
+    "restaurant":          ["Gastronomie", "Foodservice"],
+    "cafe":                ["Gastronomie", "Café & Bäckerei"],
+    "bar":                 ["Gastronomie", "Nachtgastronomie"],
+    "friseur":             ["Beauty & Wellness", "Friseur"],
+    "schoenheitssalon":    ["Beauty & Wellness", "Kosmetik"],
+    "nagelstudio":         ["Beauty & Wellness", "Nageldesign"],
+    "barber":              ["Beauty & Wellness", "Barbershop"],
+    "zahnarzt":            ["Gesundheit", "Zahnmedizin"],
+    "arzt":                ["Gesundheit", "Medizin"],
+    "physiotherapeut":     ["Gesundheit", "Physiotherapie"],
+    "fitnessstudio":       ["Sport & Fitness"],
+    "hotel":               ["Hotellerie & Tourismus"],
+    "immobilien":          ["Immobilien"],
+    "handwerker":          ["Handwerk & Bau"],
+    "elektriker":          ["Handwerk & Bau", "Elektrotechnik"],
+    "klempner":            ["Handwerk & Bau", "Sanitär"],
+    "dachdecker":          ["Handwerk & Bau", "Dachdeckerei"],
+    "solar":               ["Energie & Umwelt", "Photovoltaik"],
+    "heizung":             ["Handwerk & Bau", "Heizungstechnik"],
+    "autowerkstatt":       ["KFZ & Mobilität"],
+    "anwalt":              ["Recht & Beratung", "Kanzlei"],
+    "steuerberater":       ["Recht & Beratung", "Steuern & Finanzen"],
+    "unternehmensberater": ["Beratung & Consulting"],
+    "einzelhandel":        ["Einzelhandel & Verkauf"],
+}
+
+# Branchen-Keywords die im Seitentext auf Spezialgebiete hinweisen
+_BRANCHEN_KEYWORD_MAP: list[tuple[str, str]] = [
+    ("hochzeit|heirat|braut",          "Hochzeitsbranche"),
+    ("kind|kinder|baby|pediatr",       "Kinder & Familie"),
+    ("tier|hund|katze|veterinär",      "Tiermedizin"),
+    ("sport|fitness|yoga|pilates",     "Sport & Wellness"),
+    ("digital|online|software|app",    "Digitale Dienste"),
+    ("pflege|senio|alten",             "Pflege & Soziales"),
+    ("bau|bauprojekt|architekt",       "Bau & Architektur"),
+    ("ausbildung|kurs|schulung|coach", "Bildung & Coaching"),
+    ("transport|logistik|lieferung",   "Logistik & Transport"),
+    ("bio|nachhaltig|öko|vegan",       "Nachhaltigkeit"),
+]
+
+
+def leite_branchen_ab(kategorie: Optional[str], text: str) -> list[str]:
+    """
+    [HEURISTIK] Leitet Branchenbegriffe aus Kategorie + Seiteninhalt ab.
+    Gibt eine deduplizierte, sortierte Liste zurück.
+    """
+    branchen: list[str] = []
+
+    # 1. Direkt aus Kategorie
+    if kategorie:
+        branchen.extend(_KATEGORIE_BRANCHEN.get(kategorie, []))
+
+    # 2. Keyword-Scan im Text (Leistungen / Über-uns)
+    text_lower = text.lower() if text else ""
+    for muster, branche in _BRANCHEN_KEYWORD_MAP:
+        if branche not in branchen and re.search(muster, text_lower):
+            branchen.append(branche)
+
+    return list(dict.fromkeys(branchen))  # dedupliziert, Reihenfolge behalten
+
+
+# ── Sichtbare Schwächen ───────────────────────────────────────────────────────
+
+def identifiziere_sichtbare_schwaechen(
+    hat_webseite: bool,
+    # Signale
+    cta_gefunden: bool,
+    kontaktformular_gefunden: bool,
+    buchungs_signal_gefunden: bool,
+    whatsapp_gefunden: bool,
+    chat_widget_gefunden: bool,
+    # Heuristiken
+    sieht_veraltet_aus: bool,
+    fehlt_mobile_viewport: bool,
+    fehlt_ssl: bool,
+    baukastenseite: bool,
+    schwache_struktur: bool,
+    technologie_stack: Optional[str] = None,
+) -> list[str]:
+    """
+    [HEURISTIK] Gibt eine Liste sichtbarer Schwächen zurück.
+    Jede Schwäche ist direkt aus Website-Beobachtungen ableitbar –
+    keine Scoring-Annahmen, keine Kategorisierungslogik.
+    """
+    schwaechen: list[str] = []
+
+    if not hat_webseite:
+        schwaechen.append("Kein Online-Auftritt vorhanden")
+        return schwaechen  # weitere Prüfungen sinnlos
+
+    if sieht_veraltet_aus:
+        schwaechen.append("Website wirkt veraltet (altes Copyright, veraltete Technologien)")
+
+    if fehlt_mobile_viewport:
+        schwaechen.append("Kein Mobile-Viewport – wahrscheinlich nicht mobiloptimiert")
+
+    if fehlt_ssl:
+        schwaechen.append("Kein HTTPS – unsichere Verbindung, schlechtes Google-Ranking-Signal")
+
+    if baukastenseite:
+        stack = f" ({technologie_stack})" if technologie_stack else ""
+        schwaechen.append(f"Baukastenseite{stack} – begrenzte Anpassbarkeit und Professionalität")
+
+    if schwache_struktur:
+        schwaechen.append("Schwache Seitenstruktur – wenige Unterseiten oder keine Navigation erkennbar")
+
+    if not cta_gefunden:
+        schwaechen.append("Kein Call-to-Action – Besucher werden nicht zur Handlung aufgefordert")
+
+    if not kontaktformular_gefunden:
+        schwaechen.append("Kein Kontaktformular – Kontaktaufnahme ist umständlich")
+
+    if not buchungs_signal_gefunden:
+        schwaechen.append("Keine Online-Buchungsmöglichkeit erkannt")
+
+    if not whatsapp_gefunden:
+        schwaechen.append("Kein WhatsApp-Kontakt angeboten")
+
+    if not chat_widget_gefunden:
+        schwaechen.append("Kein Live-Chat oder Chat-Widget vorhanden")
+
+    return schwaechen
+
+
+# ── Konversionsqualität ───────────────────────────────────────────────────────
+
+def bewerte_konversions_qualitaet(
+    hat_webseite: bool,
+    cta_gefunden: bool,
+    kontaktformular_gefunden: bool,
+    buchungs_signal_gefunden: bool,
+    sieht_veraltet_aus: bool,
+    fehlt_mobile_viewport: bool,
+) -> str:
+    """
+    [HEURISTIK] Gibt eine von vier Qualitätsstufen zurück:
+    'stark' | 'mittel' | 'schwach' | 'fehlt'
+
+    Basiert ausschließlich auf beobachteten Signalen – kein Lead-Score.
+    """
+    if not hat_webseite:
+        return "fehlt"
+
+    punkte = 0
+    if cta_gefunden:
+        punkte += 2
+    if kontaktformular_gefunden:
+        punkte += 2
+    if buchungs_signal_gefunden:
+        punkte += 2
+    if not sieht_veraltet_aus:
+        punkte += 1
+    if not fehlt_mobile_viewport:
+        punkte += 1
+
+    if punkte >= 6:
+        return "stark"
+    if punkte >= 3:
+        return "mittel"
+    return "schwach"
+
+
+# ── Zusammenfassung ───────────────────────────────────────────────────────────
+
+def generiere_zusammenfassung(
+    name: str,
+    kategorie: Optional[str],
+    meta_beschreibung: Optional[str],
+    ueber_uns_text: Optional[str],
+    leistungen_text: Optional[str],
+    stadt: Optional[str] = None,
+) -> str:
+    """
+    [GENERIERT] Erstellt eine kurze Firmenbeschreibung (max. 2 Sätze).
+    Priorität: Über-uns-Seite > Meta-Description > konstruiert aus Stammdaten.
+    Klar als generiert markiert – keine erfundenen Fakten.
+    """
+    # Priorität 1: Über-uns-Text (ersten Satz extrahieren)
+    if ueber_uns_text and len(ueber_uns_text.strip()) > 40:
+        saetze = re.split(r"(?<=[.!?])\s+", ueber_uns_text.strip())
+        # Ersten zwei sinnvollen Sätze nehmen
+        kandidaten = [s for s in saetze if len(s) > 25][:2]
+        if kandidaten:
+            return " ".join(kandidaten)
+
+    # Priorität 2: Meta-Description
+    if meta_beschreibung and len(meta_beschreibung.strip()) > 30:
+        return bereinige_text(meta_beschreibung, 250)
+
+    # Priorität 3: Konstruiert aus Stammdaten (klar als Fallback)
+    ort_teil = f" in {stadt}" if stadt else ""
+    kat_label = _kategorie_zu_label(kategorie)
+    leistungs_teil = ""
+    if leistungen_text:
+        kurz = bereinige_text(leistungen_text, 80)
+        leistungs_teil = f" Angeboten werden unter anderem: {kurz}."
+
+    return f"{name} ist {kat_label}{ort_teil}.{leistungs_teil}"
+
+
+def _kategorie_zu_label(kategorie: Optional[str]) -> str:
+    """Wandelt internes Kategorie-Kürzel in lesbaren deutschen Text um."""
+    mapping = {
+        "restaurant": "ein Restaurant",
+        "cafe": "ein Café",
+        "bar": "eine Bar",
+        "friseur": "ein Friseursalon",
+        "schoenheitssalon": "ein Schönheitssalon",
+        "nagelstudio": "ein Nagelstudio",
+        "barber": "ein Barbershop",
+        "zahnarzt": "eine Zahnarztpraxis",
+        "arzt": "eine Arztpraxis",
+        "physiotherapeut": "eine Physiotherapie-Praxis",
+        "fitnessstudio": "ein Fitnessstudio",
+        "hotel": "ein Hotel",
+        "immobilien": "ein Immobilienbüro",
+        "handwerker": "ein Handwerksbetrieb",
+        "elektriker": "ein Elektrobetrieb",
+        "klempner": "ein Sanitärbetrieb",
+        "dachdecker": "ein Dachdeckerbetrieb",
+        "solar": "ein Solartechnik-Unternehmen",
+        "heizung": "ein Heizungsbauunternehmen",
+        "autowerkstatt": "eine Autowerkstatt",
+        "anwalt": "eine Anwaltskanzlei",
+        "steuerberater": "eine Steuerberatungskanzlei",
+        "unternehmensberater": "ein Beratungsunternehmen",
+        "einzelhandel": "ein Einzelhandelsgeschäft",
+    }
+    return mapping.get(kategorie or "", "ein lokales Unternehmen")

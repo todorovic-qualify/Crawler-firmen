@@ -25,6 +25,7 @@ from crawler.models import Unternehmen, AnreicherungsBefund, WebseitenAnalyse
 from crawler.utils.http_utils import get, erstelle_client
 from crawler.utils.parse_utils import (
     bereinige_text,
+    bewerte_konversions_qualitaet,
     extrahiere_emails,
     extrahiere_entscheidungstraeger,
     extrahiere_haupttext,
@@ -36,14 +37,17 @@ from crawler.utils.parse_utils import (
     extrahiere_technologie_stack,
     extrahiere_telefon,
     fehlt_mobile_viewport,
+    generiere_zusammenfassung,
     hat_buchungssignal,
     hat_chat_widget,
     hat_cta,
     hat_kontaktformular,
     hat_newsletter,
-    hat_whatsapp,
-    ist_baukastenseite,
     hat_schwache_struktur,
+    hat_whatsapp,
+    identifiziere_sichtbare_schwaechen,
+    ist_baukastenseite,
+    leite_branchen_ab,
     parse_html,
     sieht_veraltet_aus,
 )
@@ -86,6 +90,22 @@ def reichere_an(unternehmen: Unternehmen) -> Unternehmen:
     Gibt das angereicherte Objekt zurück (Mutation + Return).
     """
     if not unternehmen.webseite:
+        # Auch ohne Website: Branchen + sichtbare Schwächen setzen
+        befund = AnreicherungsBefund()
+        befund.sichtbare_schwaechen = identifiziere_sichtbare_schwaechen(
+            hat_webseite=False,
+            cta_gefunden=False, kontaktformular_gefunden=False,
+            buchungs_signal_gefunden=False, whatsapp_gefunden=False,
+            chat_widget_gefunden=False, sieht_veraltet_aus=False,
+            fehlt_mobile_viewport=False, fehlt_ssl=False,
+            baukastenseite=False, schwache_struktur=False,
+        )
+        befund.branchen = leite_branchen_ab(unternehmen.kategorie, "")
+        befund.konversions_qualitaet = "fehlt"
+        befund.fehlt_cta = True
+        befund.fehlt_buchungsoptimierung = True
+        befund.kein_ai_automation_signal = True
+        unternehmen.anreicherungs_befund = befund
         return unternehmen
 
     basis_url = _normalisiere_url(unternehmen.webseite)
@@ -203,21 +223,73 @@ def reichere_an(unternehmen: Unternehmen) -> Unternehmen:
                 if leistungen_liste:
                     befund.extraktion_leistungen = ", ".join(leistungen_liste)
 
-    # ── Phase 4: Fehlende Stammdaten aus Befund übernehmen ───────────────────
-    _uebernehme_in_unternehmen(unternehmen, befund)
+    # ── Phase 4: Abgeleitete Heuristiken + Zusammenfassungen ─────────────────
 
-    # [HEURISTIK] Schwache Struktur – soup_start wurde im with-Block gesetzt
+    # [HEURISTIK] Schwache Struktur
     if soup_start is not None:
         befund.schwache_struktur = hat_schwache_struktur(
             soup_start, len(befund.gecrawlte_seiten)
         )
 
-    # [HEURISTIK] KI/Automation-Signal
+    # [HEURISTIK] Fehlende Optimierungen (abgeleitet aus Signalen)
+    befund.fehlt_cta = not befund.cta_gefunden
+    befund.fehlt_buchungsoptimierung = (
+        not befund.buchungs_signal_gefunden and not befund.kontaktformular_gefunden
+    )
     befund.kein_ai_automation_signal = not (
         befund.chat_widget_gefunden
         or befund.buchungs_signal_gefunden
         or befund.whatsapp_gefunden
     )
+
+    # [HEURISTIK] Konversionsqualität
+    befund.konversions_qualitaet = bewerte_konversions_qualitaet(
+        hat_webseite=True,
+        cta_gefunden=befund.cta_gefunden,
+        kontaktformular_gefunden=befund.kontaktformular_gefunden,
+        buchungs_signal_gefunden=befund.buchungs_signal_gefunden,
+        sieht_veraltet_aus=befund.sieht_veraltet_aus,
+        fehlt_mobile_viewport=befund.fehlt_mobile_viewport,
+    )
+
+    # [HEURISTIK] Sichtbare Schwächen (direkt aus Website-Beobachtungen)
+    befund.sichtbare_schwaechen = identifiziere_sichtbare_schwaechen(
+        hat_webseite=True,
+        cta_gefunden=befund.cta_gefunden,
+        kontaktformular_gefunden=befund.kontaktformular_gefunden,
+        buchungs_signal_gefunden=befund.buchungs_signal_gefunden,
+        whatsapp_gefunden=befund.whatsapp_gefunden,
+        chat_widget_gefunden=befund.chat_widget_gefunden,
+        sieht_veraltet_aus=befund.sieht_veraltet_aus,
+        fehlt_mobile_viewport=befund.fehlt_mobile_viewport,
+        fehlt_ssl=befund.fehlt_ssl,
+        baukastenseite=befund.baukastenseite,
+        schwache_struktur=befund.schwache_struktur,
+        technologie_stack=befund.technologie_stack,
+    )
+
+    # [HEURISTIK] Brancheneinordnung
+    inhaltstext = " ".join(filter(None, [
+        befund.leistungen_text,
+        befund.ueber_uns_text,
+        befund.meta_beschreibung,
+    ]))
+    befund.branchen = leite_branchen_ab(unternehmen.kategorie, inhaltstext)
+
+    # [GENERIERT] Firmenzusammenfassung + Leistungen
+    _uebernehme_in_unternehmen(unternehmen, befund)
+
+    # Zusammenfassung generieren wenn noch nicht vorhanden
+    if not unternehmen.zusammenfassung:
+        unternehmen.zusammenfassung = generiere_zusammenfassung(
+            name=unternehmen.name,
+            kategorie=unternehmen.kategorie,
+            meta_beschreibung=befund.meta_beschreibung,
+            ueber_uns_text=befund.ueber_uns_text,
+            leistungen_text=befund.leistungen_text,
+            stadt=unternehmen.stadt,
+        )
+    befund.extraktion_zusammenfassung = unternehmen.zusammenfassung
 
     # ── Phase 5: Qualitätsscore ───────────────────────────────────────────────
     befund.webseite_qualitaet_score, befund.qualitaet_erklaerung = _berechne_qualitaet(befund)

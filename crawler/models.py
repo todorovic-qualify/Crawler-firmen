@@ -43,17 +43,35 @@ class AnreicherungsBefund:
     bewertungs_widget_gefunden: bool = False         # SIGNAL: Google Reviews Widget etc.
     newsletter_gefunden: bool = False                # SIGNAL: Newsletter-Anmeldeformular
 
-    # ── HEURISTIKEN (indirekte Schlussfolgerungen) ────────────────────────────
-    sieht_veraltet_aus: bool = False                 # HEURISTIK: altes Copyright, Flash etc.
-    fehlt_mobile_viewport: bool = False              # HEURISTIK: kein <meta viewport>
-    fehlt_ssl: bool = False                          # HEURISTIK: HTTP statt HTTPS
-    baukastenseite: bool = False                     # HEURISTIK: Wix, Jimdo etc.
-    schwache_struktur: bool = False                  # HEURISTIK: wenig Seiten, kein Menü
-    kein_ai_automation_signal: bool = True           # HEURISTIK: kein Chat, kein Bot
+    # ── HEURISTIKEN – Website-Qualität ───────────────────────────────────────
+    sieht_veraltet_aus: bool = False        # HEURISTIK: altes Copyright, Flash, IE-Conditionals
+    fehlt_mobile_viewport: bool = False     # HEURISTIK: kein <meta name="viewport">
+    fehlt_ssl: bool = False                 # HEURISTIK: URL beginnt mit http://
+    baukastenseite: bool = False            # HEURISTIK: Wix / Jimdo / Squarespace / Weebly
+    schwache_struktur: bool = False         # HEURISTIK: wenig Unterseiten, kein <nav>
 
-    # ── ZUSAMMENFASSUNG (generiert) ───────────────────────────────────────────
-    extraktion_zusammenfassung: Optional[str] = None  # generierte Firmenbeschreibung
-    extraktion_leistungen: Optional[str] = None        # generierte Leistungsliste
+    # ── HEURISTIKEN – fehlende Optimierungen (abgeleitet aus Signalen) ────────
+    fehlt_cta: bool = False                 # HEURISTIK: kein CTA-Keyword im Seitentext
+    fehlt_buchungsoptimierung: bool = False # HEURISTIK: kein Buchungs- und kein Kontaktformular
+    kein_ai_automation_signal: bool = True  # HEURISTIK: kein Chat-Widget, kein Bot-Fingerprint
+
+    # ── HEURISTIKEN – Konversionsqualität (Zusammenfassung) ──────────────────
+    # Kategorisiert die Website in: "stark" | "mittel" | "schwach" | "fehlt"
+    konversions_qualitaet: str = "unbekannt"  # HEURISTIK: basiert auf obigen Signalen
+
+    # ── ABGELEITETE INHALTE (generiert aus Extraktionsergebnissen) ────────────
+    # Sichtbare Schwächen: direkt aus Website-Beobachtungen ableitbar.
+    # Wichtig: keine Scoring-Annahmen – nur was wirklich fehlt/veraltet ist.
+    sichtbare_schwaechen: list[str] = field(default_factory=list)  # HEURISTIK
+
+    # Brancheneinordnung aus Kategorie + Seiteninhalt
+    branchen: list[str] = field(default_factory=list)              # HEURISTIK
+
+    # Generierte Zusammenfassung (Priorität: Über-uns > Meta > konstruiert)
+    extraktion_zusammenfassung: Optional[str] = None  # GENERIERT aus FAKTEN
+    extraktion_leistungen: Optional[str] = None       # GENERIERT aus FAKTEN
+
+    # Qualitätsscore und Begründung (werden vom Enricher berechnet)
     webseite_qualitaet_score: int = 0
     qualitaet_erklaerung: list[str] = field(default_factory=list)
 
