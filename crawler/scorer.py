@@ -4,6 +4,8 @@ Trennt klar zwischen extrahierten Fakten und Heuristiken.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from crawler.models import Unternehmen
 
 # ── Kategorie-Profile ─────────────────────────────────────────────────────────
@@ -287,14 +289,76 @@ DEFAULT_PROFIL = {
     "pitch": "Jedes lokale Unternehmen profitiert von einer modernen Online-Präsenz.",
 }
 
+# Kategorien, bei denen langsame Lead-Reaktion direkt Aufträge kostet
+_LEAD_ABHAENGIGE_KATEGORIEN: frozenset[str] = frozenset({
+    "fitnessstudio",
+    "immobilien",
+    "handwerker",
+    "elektriker",
+    "klempner",
+    "dachdecker",
+    "solar",
+    "heizung",
+    "anwalt",
+    "steuerberater",
+    "unternehmensberater",
+})
+
+# Keyword-Fallback für nicht exakt gematchte Kategorie-Strings
+_KATEGORIE_KEYWORDS: dict[str, list[str]] = {
+    "restaurant":           ["restaurant", "pizzeria", "imbiss", "gaststätte", "speise"],
+    "cafe":                 ["café", "cafe", "kaffee", "bäckerei", "konditor"],
+    "bar":                  ["bar", "pub", "lounge", "club", "disco"],
+    "friseur":              ["friseur", "frisör", "hair", "coiffeur"],
+    "schoenheitssalon":     ["beauty", "kosmetik", "wellness", "spa"],
+    "nagelstudio":          ["nagel", "nail"],
+    "barber":               ["barber", "barbershop", "herrenfriseur"],
+    "zahnarzt":             ["zahnarzt", "zahnärztin", "dental", "orthodont"],
+    "arzt":                 ["arzt", "ärztin", "praxis", "medizin", "klinik"],
+    "physiotherapeut":      ["physio", "krankengymnastik", "osteopathie"],
+    "fitnessstudio":        ["fitness", "gym", "sport", "training"],
+    "hotel":                ["hotel", "pension", "gasthaus", "hostel"],
+    "immobilien":           ["immobilien", "makler", "hausverwaltung"],
+    "handwerker":           ["handwerk", "bau", "montage", "renovier"],
+    "elektriker":           ["elektrik", "elektriker", "elektro"],
+    "klempner":             ["klempner", "sanitär", "rohr"],
+    "dachdecker":           ["dach", "dachdeck"],
+    "solar":                ["solar", "photovoltaik", "pv-anlage"],
+    "heizung":              ["heizung", "wärmepumpe", "hvac"],
+    "autowerkstatt":        ["werkstatt", "kfz", "reifenwechsel"],
+    "anwalt":               ["anwalt", "rechtsanwalt", "kanzlei"],
+    "steuerberater":        ["steuer", "buchhalter"],
+    "unternehmensberater":  ["unternehmensberatung", "consulting"],
+    "einzelhandel":         ["laden", "boutique", "handel"],
+}
+
+
+def _hole_profil(kategorie: Optional[str]) -> dict:
+    """
+    Gibt das Kategorie-Profil zurück.
+    Versucht erst Exakt-Match, dann Keyword-Fallback, dann DEFAULT_PROFIL.
+    """
+    if not kategorie:
+        return DEFAULT_PROFIL
+    key = kategorie.lower().strip()
+    if key in KATEGORIE_PROFILE:
+        return KATEGORIE_PROFILE[key]
+    for profil_key, keywords in _KATEGORIE_KEYWORDS.items():
+        if any(kw in key for kw in keywords):
+            return KATEGORIE_PROFILE[profil_key]
+    return DEFAULT_PROFIL
+
 
 def bewerte(unternehmen: Unternehmen) -> Unternehmen:
     """
     Berechnet Lead-Score, Temperatur und alle Verkaufsfelder.
     Gibt das aktualisierte Unternehmen zurück.
     """
-    profil = KATEGORIE_PROFILE.get(unternehmen.kategorie or "", DEFAULT_PROFIL)
+    profil = _hole_profil(unternehmen.kategorie)
     analyse = unternehmen.webseiten_analyse
+    befund = unternehmen.anreicherungs_befund
+    # Signalquelle: WebseitenAnalyse bevorzugt, AnreicherungsBefund als Fallback
+    _sig = analyse or befund
 
     punkte = 0
     erklaerung_teile: list[str] = []
@@ -321,24 +385,28 @@ def bewerte(unternehmen: Unternehmen) -> Unternehmen:
             schmerzpunkte.append("Website hat keine klare Conversion-Optimierung")
             angebote.append("Website-Optimierung mit CTA und Conversion-Elementen")
 
-        if analyse:
-            if not analyse.cta_gefunden:
+        if _sig:
+            if not _sig.cta_gefunden:
                 punkte += 10
                 erklaerung_teile.append("Kein CTA gefunden (+10)")
                 schmerzpunkte.append("Keine klare Handlungsaufforderung auf der Website")
-            if not analyse.kontaktformular_gefunden:
-                punkte += 8
-                erklaerung_teile.append("Kein Kontaktformular (+8)")
-            if not analyse.buchungs_signal_gefunden:
-                punkte += 8
-                erklaerung_teile.append("Keine Buchungsmöglichkeit (+8)")
+
+            # Buchungs-/Kontaktoptimierung als kombinierter Faktor
+            if not _sig.kontaktformular_gefunden and not _sig.buchungs_signal_gefunden:
+                punkte += 10
+                erklaerung_teile.append("Keine Buchungs-/Kontaktoptimierung (+10)")
                 angebote.append("Online-Buchungs- oder Anfrage-System")
-            if analyse.sieht_veraltet_aus:
+            elif not _sig.buchungs_signal_gefunden:
+                punkte += 5
+                erklaerung_teile.append("Kein Buchungssystem (+5)")
+                angebote.append("Online-Buchungs- oder Anfrage-System")
+
+            if _sig.sieht_veraltet_aus:
                 punkte += 5
                 erklaerung_teile.append("Veraltete Indikatoren im HTML (+5)")
 
             # Gute Website → Abzug
-            if website_qualitaet >= 70 and analyse.cta_gefunden and analyse.kontaktformular_gefunden:
+            if website_qualitaet >= 70 and _sig.cta_gefunden and _sig.kontaktformular_gefunden:
                 punkte -= 15
                 erklaerung_teile.append("Moderner starker Auftritt (-15)")
 
@@ -363,9 +431,15 @@ def bewerte(unternehmen: Unternehmen) -> Unternehmen:
             angebote.append("Buchungsautomatisierung")
             schmerzpunkte.append("Buchungen laufen noch manuell per Telefon")
 
+    # Lead-Reaktions-abhängige Branchen: langsame Antwort = verlorener Auftrag
+    if (unternehmen.kategorie or "").lower() in _LEAD_ABHAENGIGE_KATEGORIEN:
+        punkte += 10
+        erklaerung_teile.append("Lead-Reaktions-abhängiges Segment (+10)")
+        schmerzpunkte.append("Langsame Reaktion auf Anfragen kostet Aufträge an Mitbewerber")
+
     if profil["whatsapp"]:
         angebote.append("WhatsApp-Automation")
-        if analyse and not analyse.whatsapp_gefunden:
+        if _sig and not _sig.whatsapp_gefunden:
             punkte += 5
             erklaerung_teile.append("WhatsApp-Potential nicht genutzt (+5)")
 
