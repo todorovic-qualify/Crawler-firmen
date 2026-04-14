@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Optional
+from typing import Optional, Any
 
 import psycopg2.extras
 from dotenv import load_dotenv
@@ -45,6 +45,9 @@ class CrawlerStartRequest(BaseModel):
     max_ergebnisse: int = 100
     enrichment: bool = True
     auftrag_id: Optional[str] = None
+    # Optionale Konfig aus dem Frontend (Einstellungen-Seite)
+    crawler_config: Optional[dict[str, Any]] = None
+    scoring_config: Optional[dict[str, Any]] = None
 
 
 class JobStatus(BaseModel):
@@ -70,8 +73,16 @@ def _starte_crawler_job(request: CrawlerStartRequest, auftrag_id: str) -> None:
     from crawler.enricher import reichere_an
     from crawler.scorer import bewerte
     from crawler.db_writer import verbinde, speichere_unternehmen, aktualisiere_suchauftrag
+    from crawler.utils.http_utils import rate_limiter_setzen
 
     _laufende_jobs[auftrag_id] = {"status": "laeuft", "gefunden": 0, "verarbeitet": 0}
+
+    # ── Crawler-Konfig aus Frontend anwenden ──────────────────────────────────
+    if request.crawler_config:
+        delay = request.crawler_config.get("delay_seconds")
+        if isinstance(delay, (int, float)) and delay > 0:
+            rate_limiter_setzen(float(delay))
+            logger.info(f"[Job {auftrag_id}] Rate-Limiter: {delay}s Verzögerung")
 
     kategorien = request.kategorien or list(KATEGORIE_OSM_MAP.keys())
 
@@ -96,9 +107,9 @@ def _starte_crawler_job(request: CrawlerStartRequest, auftrag_id: str) -> None:
                     except Exception as e:
                         logger.warning(f"Enrichment fehlgeschlagen {u.name}: {e}")
 
-        # Phase 3: Scoring
+        # Phase 3: Scoring (mit optionaler Frontend-Konfig)
         for u in unternehmen_liste:
-            bewerte(u)
+            bewerte(u, konfig=request.scoring_config)
 
         # Phase 4: DB speichern
         conn = verbinde()

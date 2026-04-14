@@ -4,9 +4,32 @@ Trennt klar zwischen extrahierten Fakten und Heuristiken.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Any
 
 from crawler.models import Unternehmen
+
+# ── Standard-Scoring-Faktoren ─────────────────────────────────────────────────
+# Diese Werte werden verwendet, wenn kein konfig-Dict übergeben wird.
+# Können über die Frontend-Einstellungen überschrieben werden.
+
+DEFAULT_FAKTOREN: dict[str, int] = {
+    "kein_website": 30,
+    "website_sehr_schwach": 18,
+    "website_ausbaufaehig": 12,
+    "kein_cta": 10,
+    "keine_buchung_kontakt": 10,
+    "kein_buchungssystem": 5,
+    "veraltet_indikatoren": 5,
+    "keine_email": 8,
+    "telefon_intensiv_bonus": 12,
+    "buchung_intensiv_bonus": 10,
+    "lead_reaktionsabhaengig": 10,
+    "whatsapp_potential": 5,
+    "moderner_starker_auftritt": -15,
+}
+
+HEISS_SCHWELLE = 75
+WARM_SCHWELLE = 45
 
 # ── Kategorie-Profile ─────────────────────────────────────────────────────────
 
@@ -349,12 +372,31 @@ def _hole_profil(kategorie: Optional[str]) -> dict:
     return DEFAULT_PROFIL
 
 
-def bewerte(unternehmen: Unternehmen) -> Unternehmen:
+def bewerte(unternehmen: Unternehmen, konfig: Optional[dict[str, Any]] = None) -> Unternehmen:
     """
     Berechnet Lead-Score, Temperatur und alle Verkaufsfelder.
     Gibt das aktualisierte Unternehmen zurück.
+
+    konfig: optionales Dict aus den Frontend-Einstellungen, z.B.:
+        {
+          "scoring": { "heiss_schwelle": 75, "warm_schwelle": 45, "faktoren": {...} },
+          "kategorien": { "restaurant": { ... }, ... }
+        }
     """
-    profil = _hole_profil(unternehmen.kategorie)
+    # ── Konfig auflösen ───────────────────────────────────────────────────────
+    sc = (konfig or {}).get("scoring") or {}
+    faktoren: dict[str, int] = {**DEFAULT_FAKTOREN, **(sc.get("faktoren") or {})}
+    heiss_schwelle: int = int(sc.get("heiss_schwelle", HEISS_SCHWELLE))
+    warm_schwelle: int = int(sc.get("warm_schwelle", WARM_SCHWELLE))
+
+    # Kategorie-Profil: ggf. aus Frontend-Konfig überschreiben
+    kat_override = (konfig or {}).get("kategorien") or {}
+    kat_key = (unternehmen.kategorie or "").lower().strip()
+    if kat_key and kat_key in kat_override:
+        profil = {**_hole_profil(unternehmen.kategorie), **kat_override[kat_key]}
+    else:
+        profil = _hole_profil(unternehmen.kategorie)
+
     analyse = unternehmen.webseiten_analyse
     befund = unternehmen.anreicherungs_befund
     # Signalquelle: WebseitenAnalyse bevorzugt, AnreicherungsBefund als Fallback
@@ -365,83 +407,85 @@ def bewerte(unternehmen: Unternehmen) -> Unternehmen:
     schmerzpunkte: list[str] = []
     angebote: list[str] = []
 
+    f = faktoren  # Kurzname
+
     # ── Webseiten-Faktoren ─────────────────────────────────────────────────────
     if not unternehmen.hat_webseite:
-        punkte += 30
-        erklaerung_teile.append("Kein Website (+30)")
+        punkte += f["kein_website"]
+        erklaerung_teile.append(f"Kein Website (+{f['kein_website']})")
         schmerzpunkte.append("Kein Online-Auftritt – potenzielle Kunden finden das Unternehmen nicht online")
         angebote.append("Neue professionelle Webseite")
     else:
         website_qualitaet = unternehmen.webseite_qualitaet_score
 
         if website_qualitaet < 30:
-            punkte += 18
-            erklaerung_teile.append("Website sehr schwach/veraltet (+18)")
+            punkte += f["website_sehr_schwach"]
+            erklaerung_teile.append(f"Website sehr schwach/veraltet (+{f['website_sehr_schwach']})")
             schmerzpunkte.append("Website ist veraltet und verliert täglich potenzielle Kunden")
             angebote.append("Website-Relaunch / Modernisierung")
         elif website_qualitaet < 50:
-            punkte += 12
-            erklaerung_teile.append("Website ausbaufähig (+12)")
+            punkte += f["website_ausbaufaehig"]
+            erklaerung_teile.append(f"Website ausbaufähig (+{f['website_ausbaufaehig']})")
             schmerzpunkte.append("Website hat keine klare Conversion-Optimierung")
             angebote.append("Website-Optimierung mit CTA und Conversion-Elementen")
 
         if _sig:
             if not _sig.cta_gefunden:
-                punkte += 10
-                erklaerung_teile.append("Kein CTA gefunden (+10)")
+                punkte += f["kein_cta"]
+                erklaerung_teile.append(f"Kein CTA gefunden (+{f['kein_cta']})")
                 schmerzpunkte.append("Keine klare Handlungsaufforderung auf der Website")
 
             # Buchungs-/Kontaktoptimierung als kombinierter Faktor
             if not _sig.kontaktformular_gefunden and not _sig.buchungs_signal_gefunden:
-                punkte += 10
-                erklaerung_teile.append("Keine Buchungs-/Kontaktoptimierung (+10)")
+                punkte += f["keine_buchung_kontakt"]
+                erklaerung_teile.append(f"Keine Buchungs-/Kontaktoptimierung (+{f['keine_buchung_kontakt']})")
                 angebote.append("Online-Buchungs- oder Anfrage-System")
             elif not _sig.buchungs_signal_gefunden:
-                punkte += 5
-                erklaerung_teile.append("Kein Buchungssystem (+5)")
+                punkte += f["kein_buchungssystem"]
+                erklaerung_teile.append(f"Kein Buchungssystem (+{f['kein_buchungssystem']})")
                 angebote.append("Online-Buchungs- oder Anfrage-System")
 
             if _sig.sieht_veraltet_aus:
-                punkte += 5
-                erklaerung_teile.append("Veraltete Indikatoren im HTML (+5)")
+                punkte += f["veraltet_indikatoren"]
+                erklaerung_teile.append(f"Veraltete Indikatoren im HTML (+{f['veraltet_indikatoren']})")
 
             # Gute Website → Abzug
             if website_qualitaet >= 70 and _sig.cta_gefunden and _sig.kontaktformular_gefunden:
-                punkte -= 15
-                erklaerung_teile.append("Moderner starker Auftritt (-15)")
+                punkte += f["moderner_starker_auftritt"]  # negativer Wert
+                erklaerung_teile.append(f"Moderner starker Auftritt ({f['moderner_starker_auftritt']})")
 
     # ── Kontaktdaten ──────────────────────────────────────────────────────────
     if not unternehmen.hat_email:
-        punkte += 8
-        erklaerung_teile.append("Keine E-Mail gefunden (+8)")
+        punkte += f["keine_email"]
+        erklaerung_teile.append(f"Keine E-Mail gefunden (+{f['keine_email']})")
         schmerzpunkte.append("Kein direkter E-Mail-Kontakt – schwer erreichbar")
 
     # ── Kategorie-spezifische Faktoren ────────────────────────────────────────
     if profil["telefon_intensiv"]:
-        punkte += 12
-        erklaerung_teile.append("Telefon-intensives Segment (+12)")
+        punkte += f["telefon_intensiv_bonus"]
+        erklaerung_teile.append(f"Telefon-intensives Segment (+{f['telefon_intensiv_bonus']})")
         if profil["ki_telefon"]:
             angebote.append("KI-Telefonagent")
             schmerzpunkte.append("Hohe Telefonlast – Anrufe werden außerhalb der Öffnungszeiten verpasst")
 
     if profil["buchung_intensiv"]:
-        punkte += 10
-        erklaerung_teile.append("Buchungs-intensives Segment (+10)")
+        punkte += f["buchung_intensiv_bonus"]
+        erklaerung_teile.append(f"Buchungs-intensives Segment (+{f['buchung_intensiv_bonus']})")
         if profil["booking"]:
             angebote.append("Buchungsautomatisierung")
             schmerzpunkte.append("Buchungen laufen noch manuell per Telefon")
 
     # Lead-Reaktions-abhängige Branchen: langsame Antwort = verlorener Auftrag
     if (unternehmen.kategorie or "").lower() in _LEAD_ABHAENGIGE_KATEGORIEN:
-        punkte += 10
-        erklaerung_teile.append("Lead-Reaktions-abhängiges Segment (+10)")
+        punkte += f["lead_reaktionsabhaengig"]
+        erklaerung_teile.append(f"Lead-Reaktions-abhängiges Segment (+{f['lead_reaktionsabhaengig']})")
         schmerzpunkte.append("Langsame Reaktion auf Anfragen kostet Aufträge an Mitbewerber")
 
     if profil["whatsapp"]:
         angebote.append("WhatsApp-Automation")
         if _sig and not _sig.whatsapp_gefunden:
-            punkte += 5
-            erklaerung_teile.append("WhatsApp-Potential nicht genutzt (+5)")
+            punkte += f["whatsapp_potential"]
+            erklaerung_teile.append(f"WhatsApp-Potential nicht genutzt (+{f['whatsapp_potential']})")
 
     # Automation- und Website-Bonus aus Kategorie-Profil
     punkte += profil["automation_bonus"]
@@ -479,9 +523,9 @@ def bewerte(unternehmen: Unternehmen) -> Unternehmen:
     punkte = max(0, min(100, punkte))
     unternehmen.lead_score = punkte
 
-    if punkte >= 75:
+    if punkte >= heiss_schwelle:
         unternehmen.lead_temperatur = "HEISS"
-    elif punkte >= 45:
+    elif punkte >= warm_schwelle:
         unternehmen.lead_temperatur = "WARM"
     else:
         unternehmen.lead_temperatur = "KALT"
