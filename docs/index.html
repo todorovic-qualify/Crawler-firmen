@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LeadScout – Lokale Lead-Generierung</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .badge-heiss  { background:#fee2e2; color:#b91c1c; font-weight:700; }
+    .badge-warm   { background:#ffedd5; color:#c2410c; font-weight:600; }
+    .badge-kalt   { background:#f1f5f9; color:#64748b; }
+    .spinner { border:3px solid #e2e8f0; border-top-color:#3b82f6; border-radius:50%; width:20px; height:20px; animation:spin .7s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    details > summary { cursor:pointer; list-style:none; }
+    details > summary::-webkit-details-marker { display:none; }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<!-- Nav -->
+<nav class="bg-white border-b border-slate-200 px-6 py-3 flex items-center gap-3">
+  <span class="text-lg font-bold text-slate-900">🔍 LeadScout</span>
+  <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">Demo</span>
+  <span class="ml-auto text-xs text-slate-400">Lokale Lead-Generierung</span>
+</nav>
+
+<main class="max-w-7xl mx-auto px-4 py-8 space-y-8">
+
+  <!-- Header -->
+  <div>
+    <h1 class="text-2xl font-bold text-slate-900">Lokale Leads finden</h1>
+    <p class="text-slate-500 mt-1">Suche + Bewertung lokaler Unternehmen als Verkaufschancen</p>
+  </div>
+
+  <!-- Form -->
+  <div class="bg-white rounded-xl border border-slate-200 p-6 space-y-5">
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Ort</label>
+        <input id="ort" value="München" placeholder="z.B. München"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Radius (km)</label>
+        <input id="radius" type="number" value="10" min="1" max="100"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Max. Ergebnisse</label>
+        <input id="max" type="number" value="50" min="5" max="500" step="5"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+    </div>
+
+    <!-- Categories -->
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <label class="text-sm font-medium text-slate-700">Kategorien <span id="kat-label" class="text-slate-400 font-normal">(alle)</span></label>
+        <button onclick="clearKats()" class="text-xs text-slate-400 hover:text-slate-600">Alle deaktivieren</button>
+      </div>
+      <div id="kat-grid" class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 max-h-48 overflow-y-auto pr-1"></div>
+    </div>
+
+    <button id="startBtn" onclick="startSearch()"
+      class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 rounded-lg text-sm transition-colors">
+      Leads generieren
+    </button>
+  </div>
+
+  <!-- Progress -->
+  <div id="progress" class="hidden bg-blue-50 border border-blue-200 rounded-xl px-5 py-4">
+    <div class="flex items-center gap-3">
+      <div class="spinner"></div>
+      <div>
+        <p class="text-sm font-medium text-blue-800">Crawler läuft…</p>
+        <p id="prog-text" class="text-xs text-blue-600 mt-0.5">Suche läuft…</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div id="results" class="hidden space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 id="result-count" class="text-lg font-semibold text-slate-900"></h2>
+      <button onclick="exportCSV()"
+        class="text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg transition-colors">
+        ↓ CSV exportieren
+      </button>
+    </div>
+    <div class="overflow-x-auto rounded-xl border border-slate-200">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 border-b border-slate-200">
+          <tr>
+            <th class="text-left px-3 py-2.5 font-medium text-slate-600 whitespace-nowrap">Unternehmen</th>
+            <th class="text-left px-3 py-2.5 font-medium text-slate-600 whitespace-nowrap">Stadt</th>
+            <th class="text-left px-3 py-2.5 font-medium text-slate-600 whitespace-nowrap">Kategorie</th>
+            <th class="text-left px-3 py-2.5 font-medium text-slate-600 whitespace-nowrap">Score</th>
+            <th class="text-left px-3 py-2.5 font-medium text-slate-600 whitespace-nowrap">Temp.</th>
+            <th class="text-left px-3 py-2.5 font-medium text-slate-600 whitespace-nowrap">Telefon</th>
+            <th class="text-left px-3 py-2.5 font-medium text-slate-600 whitespace-nowrap">E-Mail</th>
+            <th class="text-left px-3 py-2.5 font-medium text-slate-600 whitespace-nowrap">Website</th>
+            <th class="text-left px-3 py-2.5 font-medium text-slate-600 whitespace-nowrap">Details</th>
+          </tr>
+        </thead>
+        <tbody id="tbody" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ── Categories ────────────────────────────────────────────────────────────────
+const KATEGORIEN = [
+  ["restaurant","Restaurant"],["cafe","Café"],["bar","Bar"],
+  ["friseur","Friseur"],["schoenheitssalon","Schönheitssalon"],
+  ["nagelstudio","Nagelstudio"],["barber","Barbershop"],
+  ["zahnarzt","Zahnarzt"],["arzt","Arzt / Praxis"],
+  ["physiotherapeut","Physiotherapeut"],["fitnessstudio","Fitnessstudio"],
+  ["hotel","Hotel"],["immobilien","Immobilienmakler"],
+  ["handwerker","Handwerker"],["elektriker","Elektriker"],
+  ["klempner","Klempner / Sanitär"],["dachdecker","Dachdecker"],
+  ["solar","Solartechnik"],["heizung","Heizung / HLK"],
+  ["autowerkstatt","Autowerkstatt"],["anwalt","Anwalt / Kanzlei"],
+  ["steuerberater","Steuerberater"],["unternehmensberater","Unternehmensberater"],
+  ["einzelhandel","Einzelhandel"]
+];
+let selectedKats = [];
+
+const grid = document.getElementById('kat-grid');
+KATEGORIEN.forEach(([wert, label]) => {
+  const id = 'kat-' + wert;
+  const div = document.createElement('label');
+  div.className = 'flex items-center gap-1.5 text-sm cursor-pointer select-none';
+  div.innerHTML = `<input type="checkbox" id="${id}" value="${wert}" onchange="updateKats()" class="rounded" /><span class="text-slate-700">${label}</span>`;
+  grid.appendChild(div);
+});
+
+function updateKats() {
+  selectedKats = Array.from(document.querySelectorAll('#kat-grid input:checked')).map(el => el.value);
+  document.getElementById('kat-label').textContent = selectedKats.length === 0 ? '(alle)' : `(${selectedKats.length} gewählt)`;
+}
+function clearKats() {
+  document.querySelectorAll('#kat-grid input').forEach(el => el.checked = false);
+  updateKats();
+}
+
+// ── Mock Data ────────────────────────────────────────────────────────────────
+const MOCK_LEADS = [
+  { name:"Dachdeckerei Huber & Söhne", stadt:"München", kategorie:"Dachdecker", score:88, temp:"HEISS", telefon:"+49 89 4521890", email:null, website:null, angebot:"KI-Telefonagent + Website-Relaunch", schmerzpunkte:"Kein Online-Auftritt; verpasste Anrufe auf der Baustelle; keine E-Mail-Adresse", erstkontakt:"Hallo,\n\nich bin auf Dachdeckerei Huber & Söhne in München aufmerksam geworden und habe gesehen, dass Sie noch keine eigene Webseite haben.\n\nViele Ihrer Mitbewerber gewinnen über Google täglich neue Kunden. Darf ich Ihnen zeigen, was möglich wäre?" },
+  { name:"Zahnarztpraxis Dr. Schneider", stadt:"München", kategorie:"Zahnarzt", score:83, temp:"HEISS", telefon:"+49 89 3312450", email:"info@dr-schneider-zahnarzt.de", website:"http://dr-schneider-zahnarzt.de", angebot:"KI-Telefonagent + Online-Terminbuchung", schmerzpunkte:"Website veraltet (kein HTTPS); kein Buchungssystem; hohe Telefonlast", erstkontakt:"Hallo,\n\nich habe die Website von Zahnarztpraxis Dr. Schneider angeschaut. Sie haben kein Buchungssystem, veraltetes Design – da ist konkretes Potenzial.\n\nIhre Sprechstundenhilfe verbringt Stunden täglich am Telefon. Unser KI-Agent bucht Termine automatisch." },
+  { name:"Friseur Bella Vita", stadt:"München", kategorie:"Friseur", score:79, temp:"HEISS", telefon:"+49 89 7765432", email:null, website:"http://bella-vita-friseur.de", angebot:"Online-Buchungssystem mit WhatsApp-Erinnerungen", schmerzpunkte:"Kein Online-Buchungssystem; kein CTA auf Website; keine E-Mail gefunden", erstkontakt:"Hallo,\n\nich habe die Website von Friseur Bella Vita angeschaut – kein Buchungssystem, kein Kontaktformular. Jeder No-Show kostet 30–80€. Automatische Erinnerungen per WhatsApp reduzieren Ausfälle um bis zu 40%." },
+  { name:"Elektriker Müller GmbH", stadt:"Unterschleißheim", kategorie:"Elektriker", score:77, temp:"HEISS", telefon:"+49 89 3109872", email:"mueller-elektro@web.de", website:null, angebot:"KI-Telefonagent für verpasste Anrufe", schmerzpunkte:"Kein Online-Auftritt; verpasste Anrufe im Einsatz; lead-reaktionskritische Branche", erstkontakt:"Hallo,\n\nSie haben noch keine eigene Webseite. Elektrikerbetriebe verpassen täglich Aufträge durch verpasste Anrufe. Kein verpasster Anruf mehr – auch außerhalb der Geschäftszeiten." },
+  { name:"Physiotherapie am Markt", stadt:"München", kategorie:"Physiotherapeut", score:76, temp:"HEISS", telefon:"+49 89 5544321", email:"info@physio-am-markt.de", website:"https://physio-am-markt.de", angebot:"KI-Telefonagent für Terminvergabe", schmerzpunkte:"Kein Buchungssystem; hohe Telefonlast; kein CTA", erstkontakt:"Hallo,\n\nich habe die Website von Physiotherapie am Markt angeschaut – kein Buchungssystem vorhanden. Physiopraxen verlieren täglich Patienten durch nicht erreichtes Telefon." },
+  { name:"Restaurant Zur Sonne", stadt:"München", kategorie:"Restaurant", score:71, temp:"WARM", telefon:"+49 89 2234567", email:"info@restaurant-zur-sonne.de", website:"http://restaurant-zur-sonne.de", angebot:"KI-Telefonagent + Online-Reservierungssystem", schmerzpunkte:"Kein Reservierungssystem; veraltete Website; kein CTA", erstkontakt:"Hallo,\n\nich habe die Website von Restaurant Zur Sonne angeschaut. Restaurants verlieren täglich Reservierungen durch verpasste Anrufe. Ein KI-Telefonagent nimmt Reservierungen automatisch entgegen." },
+  { name:"Nagelstudio Glamour", stadt:"München", kategorie:"Nagelstudio", score:69, temp:"WARM", telefon:"+49 89 8871234", email:null, website:"https://nagelstudio-glamour.de", angebot:"WhatsApp-Buchungsbot mit Online-Kalender", schmerzpunkte:"Kein Buchungssystem; keine E-Mail; WhatsApp-Potential ungenutzt", erstkontakt:"Hallo,\n\nSie haben kein Online-Buchungssystem. Kunden buchen lieber online als anzurufen – ein WhatsApp-Buchungsbot ist die einfachste Lösung." },
+  { name:"Autowerkstatt Kraft", stadt:"Garching", kategorie:"Autowerkstatt", score:67, temp:"WARM", telefon:"+49 89 3209871", email:"info@werkstatt-kraft.de", website:"https://werkstatt-kraft.de", angebot:"WhatsApp-Status-Updates + Online-Terminbuchung", schmerzpunkte:"Kein Buchungssystem; kein WhatsApp-Kanal; hohe Telefonlast", erstkontakt:"Hallo,\n\nKunden rufen ständig an um zu fragen wann ihr Auto fertig ist. Automatische Status-Updates per WhatsApp reduzieren Anrufe und begeistern Kunden." },
+  { name:"Immobilienmakler Berger", stadt:"München", kategorie:"Immobilienmakler", score:65, temp:"WARM", telefon:"+49 89 1122334", email:"berger@immo-berger.de", website:"https://immo-berger.de", angebot:"Automatisches Lead-Follow-up-System", schmerzpunkte:"Langsame Lead-Reaktion kostet Deals; kein automatisches Follow-up", erstkontakt:"Hallo,\n\nImmobilienmakler verlieren Deals durch langsame Lead-Reaktion. Automatisiertes Follow-up innerhalb von Minuten erhöht die Abschlussrate spürbar." },
+  { name:"Klempner Notdienst 24h", stadt:"München", kategorie:"Klempner", score:64, temp:"WARM", telefon:"+49 89 9988776", email:null, website:"http://klempner-notdienst-muenchen.de", angebot:"KI-Telefonagent für Notdienstanrufe 24/7", schmerzpunkte:"Veraltete Website; keine E-Mail; Notdienst-Anrufe werden verpasst", erstkontakt:"Hallo,\n\nbei Wasserrohrbruch rufen Kunden sofort an – wer nicht abhebt, verliert den Auftrag. Unser KI-Notdienstagent nimmt Anrufe 24/7 entgegen." },
+  { name:"Café Central", stadt:"München", kategorie:"Café", score:55, temp:"WARM", telefon:"+49 89 4433221", email:"info@cafe-central-muenchen.de", website:"https://cafe-central-muenchen.de", angebot:"Professionelle Webseite + Google-Optimierung", schmerzpunkte:"Schwache Website-Struktur; kein CTA; kaum Social-Media-Präsenz", erstkontakt:"Hallo,\n\nEin ansprechender Online-Auftritt zieht neue Gäste an. Viele Cafés verlieren täglich Laufkundschaft an Konkurrenten mit besserem Online-Auftritt." },
+  { name:"Solar Bayern GmbH", stadt:"Pasing", kategorie:"Solartechnik", score:54, temp:"WARM", telefon:"+49 89 7766554", email:"info@solar-bayern.de", website:"https://solar-bayern.de", angebot:"Lead-Qualifizierungsbot + automatisches Follow-up", schmerzpunkte:"Langsame Lead-Reaktion; kein automatisches Follow-up; viele unqualifizierte Anfragen", erstkontakt:"Hallo,\n\nSolarfirmen erhalten viele Anfragen, aber nur wer schnell qualifiziert und nachfasst gewinnt den Auftrag. Automatisierte Qualifizierung steigert die Abschlussrate." },
+  { name:"Steuerberatung Klein & Partner", stadt:"München", kategorie:"Steuerberater", score:51, temp:"WARM", telefon:"+49 89 5544112", email:"kanzlei@klein-partner.de", website:"https://klein-partner.de", angebot:"Mandanten-Onboarding-Automation + Terminbuchung", schmerzpunkte:"Kein Buchungssystem; manuelle Erstgespräch-Koordination; hohe Telefonlast", erstkontakt:"Hallo,\n\nSteuerberater-Kanzleien gewinnen mit automatisiertem Mandanten-Onboarding einen klaren Wettbewerbsvorteil. Darf ich Ihnen das kurz zeigen?" },
+  { name:"Hotel Garni Seeblick", stadt:"Starnberg", kategorie:"Hotel", score:48, temp:"WARM", telefon:"+49 8151 99001", email:"info@hotel-seeblick.de", website:"https://hotel-seeblick.de", angebot:"Direktbuchungssystem auf eigener Website", schmerzpunkte:"Hohe Booking.com-Provision; kein Direktbuchungssystem; WhatsApp ungenutzt", erstkontakt:"Hallo,\n\nHotels zahlen 15–25% Provision an Booking.com. Direktbuchungen über eigene Website sparen diese Kosten – und wir bauen das System." },
+  { name:"Boutique Mode am Dom", stadt:"München", kategorie:"Einzelhandel", score:38, temp:"KALT", telefon:"+49 89 2244668", email:"info@mode-am-dom.de", website:"https://mode-am-dom.de", angebot:"Online-Shop + WhatsApp-Bestellkanal", schmerzpunkte:"Kein Online-Shop; begrenzte digitale Reichweite", erstkontakt:"Hallo,\n\nLokale Händler verlieren täglich Kunden an große Online-Plattformen. Eine eigene Online-Präsenz mit Google-Optimierung bringt lokale Kunden zurück." },
+];
+
+let currentLeads = [];
+
+// ── Search simulation ────────────────────────────────────────────────────────
+function startSearch() {
+  const ort = document.getElementById('ort').value.trim() || 'München';
+  const max = parseInt(document.getElementById('max').value) || 50;
+  const kats = selectedKats.length > 0 ? selectedKats : null;
+
+  document.getElementById('results').classList.add('hidden');
+  document.getElementById('progress').classList.remove('hidden');
+  document.getElementById('startBtn').disabled = true;
+  document.getElementById('startBtn').textContent = 'Läuft…';
+
+  // Simulate progress
+  let found = 0;
+  const progText = document.getElementById('prog-text');
+  const interval = setInterval(() => {
+    found += Math.floor(Math.random() * 8) + 3;
+    progText.textContent = `${Math.min(found, max)} gefunden · ${Math.min(Math.floor(found * 0.7), max)} verarbeitet`;
+  }, 400);
+
+  setTimeout(() => {
+    clearInterval(interval);
+    document.getElementById('progress').classList.add('hidden');
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('startBtn').textContent = 'Leads generieren';
+
+    // Filter and adjust leads for demo
+    let leads = [...MOCK_LEADS];
+    if (kats) {
+      const katMap = { dachdecker:'Dachdecker', zahnarzt:'Zahnarzt', friseur:'Friseur', elektriker:'Elektriker',
+        physiotherapeut:'Physiotherapeut', restaurant:'Restaurant', nagelstudio:'Nagelstudio',
+        autowerkstatt:'Autowerkstatt', immobilien:'Immobilienmakler', klempner:'Klempner',
+        cafe:'Café', solar:'Solartechnik', steuerberater:'Steuerberater', hotel:'Hotel',
+        einzelhandel:'Einzelhandel', handwerker:'Handwerker', barber:'Barbershop',
+        arzt:'Arzt / Praxis', schoenheitssalon:'Schönheitssalon', bar:'Bar',
+        fitnessstudio:'Fitnessstudio', heizung:'Heizung / HLK', anwalt:'Anwalt / Kanzlei',
+        unternehmensberater:'Unternehmensberater' };
+      const labels = kats.map(k => katMap[k]).filter(Boolean);
+      leads = leads.filter(l => labels.includes(l.kategorie));
+    }
+    leads = leads.slice(0, max);
+    // Adjust city to searched location
+    leads = leads.map(l => ({ ...l, stadt: l.stadt === 'München' ? ort : l.stadt }));
+    currentLeads = leads;
+    renderResults(leads);
+  }, 1800);
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function badge(temp) {
+  const cls = temp === 'HEISS' ? 'badge-heiss' : temp === 'WARM' ? 'badge-warm' : 'badge-kalt';
+  const lbl = temp === 'HEISS' ? '🔥 Heiß' : temp === 'WARM' ? '☀️ Warm' : '❄️ Kalt';
+  return `<span class="px-2 py-0.5 rounded text-xs ${cls}">${lbl}</span>`;
+}
+
+function renderResults(leads) {
+  document.getElementById('result-count').textContent = `${leads.length} Leads gefunden`;
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+
+  leads.forEach((l, i) => {
+    const webCell = l.website
+      ? `<a href="${l.website}" target="_blank" class="text-blue-600 hover:underline text-xs">${l.website.replace(/^https?:\/\//,'').slice(0,28)}</a>`
+      : '<span class="text-slate-300">—</span>';
+    const emailCell = l.email
+      ? `<a href="mailto:${l.email}" class="text-blue-600 hover:underline text-xs">${l.email.slice(0,26)}</a>`
+      : '<span class="text-slate-300">—</span>';
+    const telCell = l.telefon || '<span class="text-slate-300">—</span>';
+
+    const main = document.createElement('tr');
+    main.className = 'hover:bg-slate-50 cursor-pointer';
+    main.innerHTML = `
+      <td class="px-3 py-2.5 font-medium text-slate-900 max-w-[160px] truncate">${l.name}</td>
+      <td class="px-3 py-2.5 text-slate-500 whitespace-nowrap">${l.stadt}</td>
+      <td class="px-3 py-2.5 text-slate-500 whitespace-nowrap text-xs">${l.kategorie}</td>
+      <td class="px-3 py-2.5 font-bold text-slate-900">${l.score}</td>
+      <td class="px-3 py-2.5 whitespace-nowrap">${badge(l.temp)}</td>
+      <td class="px-3 py-2.5 whitespace-nowrap text-xs text-slate-600">${telCell}</td>
+      <td class="px-3 py-2.5 whitespace-nowrap">${emailCell}</td>
+      <td class="px-3 py-2.5 whitespace-nowrap">${webCell}</td>
+      <td class="px-3 py-2.5 text-slate-400 text-xs whitespace-nowrap" id="tog-${i}">▼ mehr</td>
+    `;
+
+    const detail = document.createElement('tr');
+    detail.id = `detail-${i}`;
+    detail.className = 'bg-slate-50 hidden';
+    detail.innerHTML = `
+      <td colspan="9" class="px-4 py-3">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <div>
+            <p class="font-semibold text-slate-500 uppercase tracking-wide mb-1">Schmerzpunkte</p>
+            <p class="text-slate-700">${l.schmerzpunkte}</p>
+          </div>
+          <div>
+            <p class="font-semibold text-slate-500 uppercase tracking-wide mb-1">Empfohlenes Angebot</p>
+            <p class="text-slate-700">${l.angebot}</p>
+          </div>
+          <div>
+            <p class="font-semibold text-slate-500 uppercase tracking-wide mb-1">Erstkontakt-Nachricht</p>
+            <p class="text-slate-700 whitespace-pre-wrap">${l.erstkontakt}</p>
+          </div>
+        </div>
+      </td>
+    `;
+
+    main.addEventListener('click', () => {
+      const d = document.getElementById(`detail-${i}`);
+      const tog = document.getElementById(`tog-${i}`);
+      const open = !d.classList.contains('hidden');
+      d.classList.toggle('hidden', open);
+      tog.textContent = open ? '▼ mehr' : '▲ schließen';
+    });
+
+    tbody.appendChild(main);
+    tbody.appendChild(detail);
+  });
+
+  document.getElementById('results').classList.remove('hidden');
+}
+
+// ── CSV Export ────────────────────────────────────────────────────────────────
+function exportCSV() {
+  const cols = ['name','stadt','kategorie','score','temp','telefon','email','website','angebot','schmerzpunkte'];
+  const header = cols.join(';');
+  const rows = currentLeads.map(l =>
+    cols.map(c => `"${String(l[c] ?? '').replace(/"/g,'""')}"`).join(';')
+  );
+  const blob = new Blob(['\uFEFF' + [header,...rows].join('\n')], { type:'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `leads_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
