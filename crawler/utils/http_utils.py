@@ -14,11 +14,18 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Standard-Header
+#DEFAULT_HEADERS = {
+#    "User-Agent": (
+#        "LeadScout/1.0 (lokales Unternehmens-Recherche-Tool; "
+#        "nur öffentliche Daten; kontakt@leadscout.example)"
+#    ),
+#    "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+#    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+#}
+
+# Standard-Header
 DEFAULT_HEADERS = {
-    "User-Agent": (
-        "LeadScout/1.0 (lokales Unternehmens-Recherche-Tool; "
-        "nur öffentliche Daten; kontakt@leadscout.example)"
-    ),
+    "User-Agent": "LeadScout/1.0 (+https://crawler-firmen.vercel.app; contact: a.todorovic@qualify-ai.de)",
     "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
