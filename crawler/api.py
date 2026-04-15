@@ -27,7 +27,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", os.environ.get("NEXTAUTH_URL", "")],
+    allow_origins=["http://localhost:3000", os.environ.get("NEXTAUTH_URL", ""), "https://crawler-firmen.vercel.app"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
