@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const CRAWLER_URL = process.env.CRAWLER_API_URL ?? "http://localhost:8000";
+const CRAWLER_URL = (process.env.CRAWLER_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 const CRAWLER_KEY = process.env.CRAWLER_API_KEY ?? "";
 
 export async function GET(
