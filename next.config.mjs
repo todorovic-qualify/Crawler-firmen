@@ -1,10 +1,8 @@
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: ["@prisma/client"],
   },
-  // Verhindert Build-Abbruch wegen TypeScript- oder ESLint-Fehlern
   typescript: {
     ignoreBuildErrors: true,
   },
