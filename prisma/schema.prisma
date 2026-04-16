@@ -82,14 +82,32 @@ model Unternehmen {
   status                LeadStatus       @default(NEU)
   notizen               String?
 
+  // Deduplication & Caching
+  externeId             String?          @map("externe_id")          // OSM element ID (z.B. "node/12345")
+  normName              String?          @map("norm_name")            // normalisierter Name für Dedup
+  normDomain            String?          @map("norm_domain")          // normalisierte Domain für Dedup
+  lastCrawledAt         DateTime?        @map("last_crawled_at")      // Letzter vollständiger Enrichment-Lauf
+  crawlStatus           String           @default("neu") @map("crawl_status")  // neu | wiederverwendet | aktualisiert
+  quelle                String?          @default("overpass")         // Datenquelle
+
   // Beziehungen
   webseitenAnalyse      WebseitenAnalyse?
+  // Legacy: direkte Suchauftrag-Verknüpfung (erster Suchlauf der diesen Lead erzeugt hat)
   suchauftrag           Suchauftrag?     @relation(fields: [suchauftragId], references: [id])
   suchauftragId         String?          @map("suchauftrag_id")
+  // Many-to-many: alle Suchläufe in denen dieser Lead erschienen ist
+  suchauftraege         SuchauftragUnternehmen[]
 
   erstelltAm            DateTime         @default(now()) @map("erstellt_am")
   aktualisiertAm        DateTime         @updatedAt @map("aktualisiert_am")
 
+  @@index([externeId])
+  @@index([normName, normDomain])
+  @@index([stadt])
+  @@index([kategorie])
+  @@index([leadScore])
+  @@index([crawlStatus])
+  @@index([lastCrawledAt])
   @@map("unternehmen")
 }
 
@@ -124,6 +142,21 @@ model WebseitenAnalyse {
   @@map("webseiten_analyse")
 }
 
+// Verknüpfungstabelle: Suchauftrag ↔ Unternehmen (many-to-many)
+model SuchauftragUnternehmen {
+  id            String      @id @default(cuid())
+  suchauftrag   Suchauftrag @relation(fields: [suchauftragId], references: [id], onDelete: Cascade)
+  suchauftragId String      @map("suchauftrag_id")
+  unternehmen   Unternehmen @relation(fields: [unternehmenId], references: [id], onDelete: Cascade)
+  unternehmenId String      @map("unternehmen_id")
+  // Herkunft im aktuellen Suchlauf
+  herkunft      String      @default("neu")  // neu | wiederverwendet | aktualisiert
+  erstelltAm    DateTime    @default(now()) @map("erstellt_am")
+
+  @@unique([suchauftragId, unternehmenId])
+  @@map("suchauftrag_unternehmen")
+}
+
 model Suchauftrag {
   id                String        @id @default(cuid())
   ort               String
@@ -137,7 +170,14 @@ model Suchauftrag {
   gesamtVerarbeitet Int           @default(0) @map("gesamt_verarbeitet")
   fehlerMeldung     String?       @map("fehler_meldung")
 
+  // Statistiken (neu in diesem Suchlauf)
+  anzahlNeu         Int           @default(0) @map("anzahl_neu")
+  anzahlWiederverwendet Int       @default(0) @map("anzahl_wiederverwendet")
+  anzahlAktualisiert Int          @default(0) @map("anzahl_aktualisiert")
+
+  // Beziehungen
   unternehmen       Unternehmen[]
+  suchauftragUnternehmen SuchauftragUnternehmen[]
 
   erstelltAm        DateTime      @default(now()) @map("erstellt_am")
   aktualisiertAm    DateTime      @updatedAt @map("aktualisiert_am")

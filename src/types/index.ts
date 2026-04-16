@@ -39,6 +39,11 @@ export interface Unternehmen {
   status: LeadStatus;
   notizen?: string | null;
   erstesKontaktnachricht?: string | null;
+  // Deduplication & Caching
+  externeId?: string | null;
+  crawlStatus?: string | null;
+  lastCrawledAt?: string | Date | null;
+  quelle?: string | null;
   webseitenAnalyse?: WebseitenAnalyse | null;
   suchauftragId?: string | null;
   erstelltAm: string | Date;

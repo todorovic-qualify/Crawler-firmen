@@ -13,6 +13,10 @@ interface JobInfo {
   gefunden: number;
   verarbeitet: number;
   fehler?: string;
+  anzahlNeu?: number;
+  anzahlWiederverwendet?: number;
+  anzahlAktualisiert?: number;
+  uebersprungen?: number;
 }
 
 interface Lead {
@@ -34,6 +38,9 @@ interface Lead {
   wahrscheinlicheSchmerzpunkte?: string | null;
   empfohleneAngebote?: string | null;
   erstesKontaktnachricht?: string | null;
+  // Neu: Herkunft aus Junction-Tabelle
+  herkunft?: "neu" | "wiederverwendet" | "aktualisiert" | null;
+  crawlStatus?: string | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -50,6 +57,18 @@ function tempBadge(t: Lead["leadTemperatur"]) {
       {labels[t]}
     </span>
   );
+}
+
+function herkunftBadge(h?: string | null) {
+  if (!h) return null;
+  const cfg: Record<string, { label: string; cls: string }> = {
+    neu:            { label: "Neu",            cls: "bg-green-100 text-green-700" },
+    wiederverwendet:{ label: "Wiederverwendet",cls: "bg-blue-100 text-blue-600" },
+    aktualisiert:   { label: "Aktualisiert",   cls: "bg-yellow-100 text-yellow-700" },
+  };
+  const c = cfg[h];
+  if (!c) return null;
+  return <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${c.cls}`}>{c.label}</span>;
 }
 
 function exportCSV(leads: Lead[]) {
@@ -145,6 +164,10 @@ export default function StartSeite() {
           gefunden: sd.gefunden ?? 0,
           verarbeitet: sd.verarbeitet ?? 0,
           fehler: sd.fehler,
+          anzahlNeu: sd.anzahl_neu ?? 0,
+          anzahlWiederverwendet: sd.anzahl_wiederverwendet ?? 0,
+          anzahlAktualisiert: sd.anzahl_aktualisiert ?? 0,
+          uebersprungen: sd.uebersprungen ?? 0,
         });
 
         if (sd.status === "abgeschlossen" || sd.status === "fehler") {
@@ -276,6 +299,7 @@ export default function StartSeite() {
               <p className="text-xs text-blue-600 mt-0.5">
                 {job.gefunden > 0
                   ? `${job.gefunden} gefunden · ${job.verarbeitet} verarbeitet`
+                    + (job.uebersprungen ? ` · ${job.uebersprungen} Re-Crawls übersprungen` : "")
                   : "Suche läuft…"}
               </p>
             </div>
@@ -286,23 +310,40 @@ export default function StartSeite() {
       {/* ── Results ── */}
       {leads.length > 0 && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-900">
-              {leads.length} Leads gefunden
-            </h2>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                {leads.length} Leads gefunden
+              </h2>
+              {job && (
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {job.anzahlNeu ? <span className="text-green-700 font-medium">{job.anzahlNeu} neu</span> : null}
+                  {job.anzahlWiederverwendet ? <span className="text-blue-700 font-medium">{job.anzahlNeu ? " · " : ""}{job.anzahlWiederverwendet} wiederverwendet</span> : null}
+                  {job.anzahlAktualisiert ? <span className="text-yellow-700 font-medium">{(job.anzahlNeu || job.anzahlWiederverwendet) ? " · " : ""}{job.anzahlAktualisiert} aktualisiert</span> : null}
+                </p>
+              )}
+            </div>
+            <div className="flex gap-2">
+            <a
+              href="/leads"
+              className="text-sm bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-2 rounded-lg transition-colors"
+            >
+              Alle Leads ansehen
+            </a>
             <button
               onClick={() => exportCSV(leads)}
               className="text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg transition-colors"
             >
               ↓ CSV exportieren
             </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-xl border border-slate-200">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  {["Unternehmen", "Stadt", "Kategorie", "Score", "Temp.", "Website", "Email", "Telefon", "Details"].map((h) => (
+                  {["Unternehmen", "Stadt", "Kategorie", "Score", "Temp.", "Status", "Website", "Email", "Telefon", "Details"].map((h) => (
                     <th key={h} className="text-left px-3 py-2.5 font-medium text-slate-600 whitespace-nowrap">
                       {h}
                     </th>
@@ -330,6 +371,9 @@ export default function StartSeite() {
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         {tempBadge(lead.leadTemperatur)}
+                      </td>
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        {herkunftBadge(lead.herkunft ?? lead.crawlStatus)}
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         {lead.hatWebseite && lead.webseite ? (
@@ -369,7 +413,7 @@ export default function StartSeite() {
 
                     {expandedId === lead.id && (
                       <tr className="bg-slate-50">
-                        <td colSpan={9} className="px-4 py-3">
+                        <td colSpan={10} className="px-4 py-3">
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                             <div>
                               <p className="font-semibold text-slate-500 uppercase tracking-wide mb-1">Schmerzpunkte</p>
