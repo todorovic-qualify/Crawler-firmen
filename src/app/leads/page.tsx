@@ -26,6 +26,7 @@ interface Lead {
   wahrscheinlicheSchmerzpunkte?: string | null;
   empfohleneAngebote?: string | null;
   erstesKontaktnachricht?: string | null;
+  oeffnungszeiten?: string | null;
   crawlStatus?: string | null;
   lastCrawledAt?: string | null;
   erstelltAm?: string | null;
@@ -522,6 +523,14 @@ export default function LeadsSeite() {
                               <p className="text-slate-700 whitespace-pre-wrap">{lead.erstesKontaktnachricht ?? "—"}</p>
                             </div>
                           </div>
+
+                          {/* Öffnungszeiten */}
+                          {lead.oeffnungszeiten && (
+                            <div className="mt-3 pt-3 border-t border-slate-200 text-xs">
+                              <p className="font-semibold text-slate-500 uppercase tracking-wide mb-1">Öffnungszeiten</p>
+                              <p className="text-slate-700 font-mono">{lead.oeffnungszeiten}</p>
+                            </div>
+                          )}
 
                           {/* Aktions-Zeile */}
                           <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-slate-200">

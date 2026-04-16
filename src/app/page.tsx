@@ -38,6 +38,7 @@ interface Lead {
   wahrscheinlicheSchmerzpunkte?: string | null;
   empfohleneAngebote?: string | null;
   erstesKontaktnachricht?: string | null;
+  oeffnungszeiten?: string | null;
   // Neu: Herkunft aus Junction-Tabelle
   herkunft?: "neu" | "wiederverwendet" | "aktualisiert" | null;
   crawlStatus?: string | null;
@@ -428,6 +429,12 @@ export default function StartSeite() {
                               <p className="text-slate-700 whitespace-pre-wrap">{lead.erstesKontaktnachricht ?? "—"}</p>
                             </div>
                           </div>
+                          {lead.oeffnungszeiten && (
+                            <div className="mt-2 pt-2 border-t border-slate-200 text-xs">
+                              <p className="font-semibold text-slate-500 uppercase tracking-wide mb-1">Öffnungszeiten</p>
+                              <p className="text-slate-700 font-mono">{lead.oeffnungszeiten}</p>
+                            </div>
+                          )}
                           <div className="flex gap-4 mt-2 text-xs text-slate-500">
                             <span>Website-Bedarf: <strong>{lead.webseiteBedarfScore}</strong></span>
                             <span>Automation-Bedarf: <strong>{lead.automationBedarfScore}</strong></span>

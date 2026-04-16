@@ -114,6 +114,7 @@ export async function GET(req: NextRequest) {
           webseite: true,
           bewertung: true,
           bewertungsanzahl: true,
+          oeffnungszeiten: true,
           leadScore: true,
           leadTemperatur: true,
           webseiteBedarfScore: true,
