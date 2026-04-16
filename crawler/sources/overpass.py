@@ -167,6 +167,9 @@ def _osm_element_zu_unternehmen(element: dict, kategorie: str) -> Optional[Unter
         or kategorie
     )
 
+    # Externe ID: Typ + OSM-ID, z.B. "node/12345678"
+    externe_id = f"{element['type']}/{element['id']}"
+
     return Unternehmen(
         name=name,
         kategorie=kategorie,
@@ -183,6 +186,8 @@ def _osm_element_zu_unternehmen(element: dict, kategorie: str) -> Optional[Unter
         hat_webseite=bool(webseite),
         hat_email=bool(email),
         hat_telefon=bool(telefon),
+        externe_id=externe_id,
+        quelle="overpass",
     )
 
 

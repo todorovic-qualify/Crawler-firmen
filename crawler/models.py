@@ -10,6 +10,7 @@ Konvention:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
 
 
@@ -145,6 +146,12 @@ class Unternehmen:
     zusammenfassung: Optional[str] = None
     leistungen: Optional[str] = None
 
+    # Deduplication & Caching (neu)
+    externe_id: Optional[str] = None       # OSM-Element-ID (z.B. "node/12345")
+    crawl_status: str = "neu"              # neu | wiederverwendet | aktualisiert
+    last_crawled_at: Optional[datetime] = None  # Wann wurde zuletzt angereichert
+    quelle: str = "overpass"              # Datenquelle
+
     # Vollständiger Befund (für Scorer nutzbar, nicht direkt in DB)
     anreicherungs_befund: Optional[AnreicherungsBefund] = None
 
@@ -183,4 +190,5 @@ class Unternehmen:
             "instagram": self.instagram or "",
             "facebook": self.facebook or "",
             "quelle_url": self.quelle_url or "",
+            "crawl_status": self.crawl_status,
         }
