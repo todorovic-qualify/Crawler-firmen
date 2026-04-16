@@ -30,13 +30,14 @@ DEFAULT_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-TIMEOUT = httpx.Timeout(15.0, connect=8.0)
+# Reduzierte Timeouts: 8s Gesamt / 5s Connect – reicht für die meisten Unternehmensseiten
+TIMEOUT = httpx.Timeout(8.0, connect=5.0)
 
 
 class RateLimiter:
     """Einfacher thread-sicherer Rate-Limiter mit min. Pause zwischen Anfragen."""
 
-    def __init__(self, delay_sek: float = 2.0):
+    def __init__(self, delay_sek: float = 0.5):
         self._delay = delay_sek
         self._letzte_anfrage: dict[str, float] = {}
         self._lock = Lock()
@@ -51,8 +52,8 @@ class RateLimiter:
             self._letzte_anfrage[host] = time.monotonic()
 
 
-# Globaler Rate-Limiter (kann per CLI überschrieben werden)
-_rate_limiter = RateLimiter(delay_sek=2.0)
+# Globaler Rate-Limiter (0.5s Standard – kann per Einstellungen überschrieben werden)
+_rate_limiter = RateLimiter(delay_sek=0.5)
 
 
 def rate_limiter_setzen(delay_sek: float) -> None:

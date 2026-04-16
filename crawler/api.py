@@ -25,10 +25,82 @@ load_dotenv()
 
 API_KEY = os.environ.get("CRAWLER_API_KEY", "")
 
+
+# ── DB-Schema-Migration (idempotent, läuft bei jedem Start) ───────────────────
+
+def _migriere_db() -> None:
+    """
+    Fügt fehlende Spalten/Tabellen hinzu (IF NOT EXISTS → sicher idempotent).
+    Läuft beim App-Start, damit der Python-Service unabhängig von prisma db push
+    funktioniert.
+    """
+    try:
+        import psycopg2
+        db_url = os.environ.get("DATABASE_URL")
+        if not db_url:
+            logger.warning("DATABASE_URL nicht gesetzt – Migration übersprungen")
+            return
+
+        conn = psycopg2.connect(db_url)
+        with conn.cursor() as cur:
+            # ── Neue Spalten in unternehmen ────────────────────────────────────
+            cur.execute("""
+                ALTER TABLE unternehmen
+                  ADD COLUMN IF NOT EXISTS externe_id       TEXT,
+                  ADD COLUMN IF NOT EXISTS norm_name        TEXT,
+                  ADD COLUMN IF NOT EXISTS norm_domain      TEXT,
+                  ADD COLUMN IF NOT EXISTS last_crawled_at  TIMESTAMPTZ,
+                  ADD COLUMN IF NOT EXISTS crawl_status     TEXT DEFAULT 'neu',
+                  ADD COLUMN IF NOT EXISTS quelle           TEXT DEFAULT 'overpass'
+            """)
+
+            # ── Neue Spalten in suchauftrag ────────────────────────────────────
+            cur.execute("""
+                ALTER TABLE suchauftrag
+                  ADD COLUMN IF NOT EXISTS anzahl_neu              INTEGER DEFAULT 0,
+                  ADD COLUMN IF NOT EXISTS anzahl_wiederverwendet  INTEGER DEFAULT 0,
+                  ADD COLUMN IF NOT EXISTS anzahl_aktualisiert     INTEGER DEFAULT 0
+            """)
+
+            # ── Junction-Tabelle suchauftrag_unternehmen ───────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS suchauftrag_unternehmen (
+                  id              TEXT PRIMARY KEY,
+                  suchauftrag_id  TEXT NOT NULL REFERENCES suchauftrag(id) ON DELETE CASCADE,
+                  unternehmen_id  TEXT NOT NULL REFERENCES unternehmen(id) ON DELETE CASCADE,
+                  herkunft        TEXT NOT NULL DEFAULT 'neu',
+                  erstellt_am     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  UNIQUE(suchauftrag_id, unternehmen_id)
+                )
+            """)
+
+            # ── Indexes für Performance ────────────────────────────────────────
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_externe_id    ON unternehmen(externe_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_norm          ON unternehmen(norm_name, norm_domain)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_stadt         ON unternehmen(stadt)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_lead_score    ON unternehmen(lead_score)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_crawl_status  ON unternehmen(crawl_status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sau_suchauftrag   ON suchauftrag_unternehmen(suchauftrag_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sau_unternehmen   ON suchauftrag_unternehmen(unternehmen_id)")
+
+        conn.commit()
+        conn.close()
+        logger.info("DB-Migration erfolgreich abgeschlossen")
+    except Exception as e:
+        logger.warning(f"DB-Migration fehlgeschlagen (nicht kritisch): {e}")
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    _migriere_db()
+    yield
+
 app = FastAPI(
     title="LeadScout Crawler API",
     description="Interner Crawler-Service für die LeadScout-Plattform",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

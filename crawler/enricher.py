@@ -52,16 +52,11 @@ from crawler.utils.parse_utils import (
     sieht_veraltet_aus,
 )
 
-# Gezielte Pfade die wir immer versuchen
+# Nur die 3 wichtigsten Pfade – reicht für Kontaktdaten + rechtlichen Namen
 PRIORITAETS_PFADE = [
     "/impressum",
     "/kontakt",
     "/contact",
-    "/about",
-    "/ueber-uns",
-    "/team",
-    "/leistungen",
-    "/services",
 ]
 
 # Pfad → Typ-Mapping für inhaltliche Zuordnung
@@ -185,7 +180,7 @@ def reichere_an(unternehmen: Unternehmen) -> Unternehmen:
         # ── Phase 3: Unterseiten crawlen ──────────────────────────────────────
         gecrawlt_typen: set[str] = set()
 
-        for url in alle_ziele[:12]:  # max. 12 Unterseiten
+        for url in alle_ziele[:4]:  # max. 4 Unterseiten – reicht für Kontaktdaten
             if url == basis_url or url in befund.gecrawlte_seiten:
                 continue
 
