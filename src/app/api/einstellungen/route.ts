@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 
-const CONFIG_PATH = join(process.cwd(), "crawler-config.json");
+// Auf Vercel ist das Projekt-Verzeichnis read-only → /tmp nutzen (ephemeral)
+// Lokal: crawler-config.json im Projekt-Root (persistent)
+const CONFIG_PATH = process.env.VERCEL
+  ? "/tmp/crawler-config.json"
+  : join(process.cwd(), "crawler-config.json");
 
 export const DEFAULT_CONFIG = {
   crawler: {

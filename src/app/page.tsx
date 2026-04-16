@@ -127,31 +127,45 @@ export default function StartSeite() {
     const jobId: string = data.jobId;
     setJob({ jobId, status: "laeuft", gefunden: 0, verarbeitet: 0 });
 
-    // Poll status every 2s
+    // Poll status every 3s
     pollRef.current = setInterval(async () => {
-      const sr = await fetch(`/api/search/${jobId}/status`);
-      const sd = await sr.json();
+      try {
+        const sr = await fetch(`/api/search/${jobId}/status`);
+        const sd = await sr.json();
 
-      setJob({
-        jobId,
-        status: sd.status,
-        gefunden: sd.gefunden ?? 0,
-        verarbeitet: sd.verarbeitet ?? 0,
-        fehler: sd.fehler,
-      });
-
-      if (sd.status === "abgeschlossen" || sd.status === "fehler") {
-        clearInterval(pollRef.current!);
-
-        if (sd.status === "abgeschlossen") {
-          const rr = await fetch(`/api/search/${jobId}/results`);
-          const rd = await rr.json();
-          setLeads(rd.leads ?? []);
-        } else {
-          setFehler(sd.fehler ?? "Crawler-Fehler");
+        if (!sr.ok) {
+          // Don't stop polling on transient errors, just log
+          console.warn("Status-Fehler:", sd);
+          return;
         }
+
+        setJob({
+          jobId,
+          status: sd.status ?? "laeuft",
+          gefunden: sd.gefunden ?? 0,
+          verarbeitet: sd.verarbeitet ?? 0,
+          fehler: sd.fehler,
+        });
+
+        if (sd.status === "abgeschlossen" || sd.status === "fehler") {
+          clearInterval(pollRef.current!);
+
+          if (sd.status === "abgeschlossen") {
+            const rr = await fetch(`/api/search/${jobId}/results`);
+            const rd = await rr.json();
+            if (!rr.ok) {
+              setFehler(`Ergebnisse konnten nicht geladen werden: ${rd.error ?? rr.status}`);
+            } else {
+              setLeads(rd.leads ?? []);
+            }
+          } else {
+            setFehler(sd.fehler ?? "Crawler-Fehler");
+          }
+        }
+      } catch (err) {
+        console.warn("Polling-Fehler:", err);
       }
-    }, 2000);
+    }, 3000);
   }
 
   const isRunning = job?.status === "laeuft";
