@@ -56,7 +56,19 @@ interface AnalyseErgebnis {
   google_bewertungen_analyse?: string | null;
   umsatzpotenzial?: "HOCH" | "MITTEL" | "NIEDRIG";
   top_einstiegsangebot?: string;
+  // Metadaten (aus DB-Fetch)
+  analysiert_am?: string | null;
+  aktualisiert_am?: string | null;
+  ki_modell?: string | null;
 }
+
+const PAINPOINT_LABELS: Record<string, string> = {
+  marketing_leadgewinnung:         "Marketing",
+  vertrieb_abschluss:              "Vertrieb",
+  prozesse_zeitfresser:            "Prozesse",
+  digitalisierung_automatisierung: "Digital",
+  kundenkommunikation:             "Kommunikation",
+};
 
 type SortField = "leadScore" | "name" | "stadt" | "erstelltAm" | "lastCrawledAt";
 type SortDir = "asc" | "desc";
@@ -144,7 +156,9 @@ export default function LeadsSeite() {
   const [recrawlingId, setRecrawlingId] = useState<string | null>(null);
   const [recrawlNachricht, setRecrawlNachricht] = useState<string | null>(null);
   const [analysiertId, setAnalysiertId] = useState<string | null>(null);
-  const [analyseErgebnisse, setAnalyseErgebnisse] = useState<Record<string, AnalyseErgebnis>>({});
+  // null = geprüft, keine Analyse vorhanden; undefined = noch nicht geprüft
+  const [analyseErgebnisse, setAnalyseErgebnisse] = useState<Record<string, AnalyseErgebnis | null>>({});
+  const [analyseLaden, setAnalyseLaden] = useState<Record<string, boolean>>({});
   const [analyseNachricht, setAnalyseNachricht] = useState<{ typ: "erfolg" | "fehler"; text: string } | null>(null);
 
   // Filterbereich ein/aus
@@ -200,6 +214,34 @@ export default function LeadsSeite() {
   useEffect(() => {
     ladeDaten();
   }, [ladeDaten]);
+
+  // ── Analyse lazy laden wenn Zeile aufgeklappt wird ────────────────────────────
+
+  useEffect(() => {
+    if (!expandedId) return;
+    if (expandedId in analyseErgebnisse) return; // bereits gecacht (null oder Objekt)
+    ladeAnalyse(expandedId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedId]);
+
+  async function ladeAnalyse(leadId: string) {
+    setAnalyseLaden((prev) => ({ ...prev, [leadId]: true }));
+    try {
+      const res = await fetch(`/api/leads/${leadId}/analysis`);
+      if (res.status === 404) {
+        setAnalyseErgebnisse((prev) => ({ ...prev, [leadId]: null }));
+        return;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        setAnalyseErgebnisse((prev) => ({ ...prev, [leadId]: data.analyse ?? null }));
+      }
+    } catch {
+      setAnalyseErgebnisse((prev) => ({ ...prev, [leadId]: null }));
+    } finally {
+      setAnalyseLaden((prev) => ({ ...prev, [leadId]: false }));
+    }
+  }
 
   // ── Filter zurücksetzen → Seite auf 1 ────────────────────────────────────────
 
@@ -260,7 +302,10 @@ export default function LeadsSeite() {
         });
         return;
       }
-      const ergebnis: AnalyseErgebnis = data.analyse ?? {};
+      const ergebnis: AnalyseErgebnis = {
+        ...(data.analyse ?? {}),
+        analysiert_am: new Date().toISOString(), // Zeitstempel sofort setzen
+      };
       setAnalyseErgebnisse((prev) => ({ ...prev, [lead.id]: ergebnis }));
       setAnalyseNachricht({
         typ: "erfolg",
@@ -727,74 +772,172 @@ export default function LeadsSeite() {
                               </button>
                             </div>
                           </div>
-                          {/* KI-Analyse-Ergebnis */}
-                          {analyseErgebnisse[lead.id] && (() => {
-                            const a = analyseErgebnisse[lead.id];
-                            const allePainpoints = Object.values(a.painpoints ?? {}).flat().filter(Boolean) as string[];
-                            const potenzialStyle =
-                              a.umsatzpotenzial === "HOCH"
-                                ? "bg-red-100 text-red-700"
-                                : a.umsatzpotenzial === "MITTEL"
-                                ? "bg-orange-100 text-orange-700"
-                                : "bg-slate-100 text-slate-600";
-                            return (
-                              <div className="mt-3 pt-3 border-t border-violet-100">
-                                <div className="bg-violet-50 border border-violet-100 rounded-lg px-3 py-3 space-y-2">
-                                  {/* Header */}
-                                  <div className="flex items-center justify-between">
-                                    <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide">
-                                      ✦ KI Vertriebsanalyse
-                                    </p>
-                                    {a.umsatzpotenzial && (
-                                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${potenzialStyle}`}>
-                                        Potenzial: {a.umsatzpotenzial}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {/* Zusammenfassung */}
-                                  {a.zusammenfassung && (
-                                    <p className="text-xs text-slate-600 leading-relaxed">
-                                      {a.zusammenfassung}
-                                    </p>
-                                  )}
-                                  {/* Top-Einstiegsangebot */}
-                                  {a.top_einstiegsangebot && (
-                                    <p className="text-xs">
-                                      <span className="font-semibold text-violet-600">Empfehlung: </span>
-                                      <span className="text-slate-700">{a.top_einstiegsangebot}</span>
-                                    </p>
-                                  )}
-                                  {/* Painpoints */}
-                                  {allePainpoints.length > 0 && (
-                                    <div>
-                                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
-                                        Painpoints
-                                      </p>
-                                      <ul className="space-y-0.5">
-                                        {allePainpoints.slice(0, 4).map((p, i) => (
-                                          <li key={i} className="text-xs text-slate-600 flex gap-1.5 leading-relaxed">
-                                            <span className="text-red-400 shrink-0 mt-0.5">▸</span>
-                                            {p}
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  )}
-                                  {/* Hook */}
-                                  {a.hooks?.[0] && (
-                                    <div className="border-t border-violet-100 pt-2">
-                                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
-                                        Cold-Call Einstieg
-                                      </p>
-                                      <p className="text-xs text-slate-600 italic leading-relaxed">
-                                        &ldquo;{a.hooks[0]}&rdquo;
-                                      </p>
-                                    </div>
-                                  )}
-                                </div>
+                          {/* ── KI-Vertriebsanalyse-Block ── */}
+                          <div className="mt-3 pt-3 border-t border-violet-100">
+                            {/* Lade-Spinner während Analyse geladen wird */}
+                            {analyseLaden[lead.id] && (
+                              <div className="flex items-center gap-2 py-3 text-xs text-violet-500">
+                                <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 100 16v-4l-3 3 3 3v-4a8 8 0 01-8-8z" />
+                                </svg>
+                                Analyse wird geladen…
                               </div>
-                            );
-                          })()}
+                            )}
+
+                            {/* Kein Analyse vorhanden */}
+                            {!analyseLaden[lead.id] && lead.id in analyseErgebnisse && analyseErgebnisse[lead.id] === null && (
+                              <p className="text-xs text-slate-400 py-2">
+                                Noch keine KI-Analyse vorhanden. Klicke auf &ldquo;✦ Lead analysieren&rdquo;.
+                              </p>
+                            )}
+
+                            {/* Analyse vorhanden → vollständige Darstellung */}
+                            {!analyseLaden[lead.id] && analyseErgebnisse[lead.id] != null && (() => {
+                              const a = analyseErgebnisse[lead.id]!;
+                              const potenzialStyle =
+                                a.umsatzpotenzial === "HOCH"   ? "bg-red-100 text-red-700" :
+                                a.umsatzpotenzial === "MITTEL" ? "bg-orange-100 text-orange-700" :
+                                                                  "bg-slate-100 text-slate-600";
+                              const analysiertDatum = a.analysiert_am ?? a.aktualisiert_am;
+
+                              return (
+                                <div className="bg-violet-50 border border-violet-100 rounded-lg overflow-hidden text-xs">
+
+                                  {/* ── Header ── */}
+                                  <div className="flex items-center justify-between px-3 py-2 bg-violet-100/60 border-b border-violet-100">
+                                    <span className="font-semibold text-violet-700 tracking-wide">✦ KI Vertriebsanalyse</span>
+                                    <div className="flex items-center gap-2">
+                                      {analysiertDatum && (
+                                        <span className="text-violet-400">
+                                          Analysiert: {fmtDatum(analysiertDatum)}
+                                        </span>
+                                      )}
+                                      {a.umsatzpotenzial && (
+                                        <span className={`px-2 py-0.5 rounded font-bold ${potenzialStyle}`}>
+                                          Potenzial: {a.umsatzpotenzial}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="px-3 py-3 space-y-3">
+
+                                    {/* ── Zusammenfassung ── */}
+                                    {a.zusammenfassung && (
+                                      <div>
+                                        <p className="font-semibold text-slate-500 uppercase tracking-wide mb-1">Zusammenfassung</p>
+                                        <p className="text-slate-700 leading-relaxed">{a.zusammenfassung}</p>
+                                      </div>
+                                    )}
+
+                                    {/* ── Bewertungsmuster ── */}
+                                    {a.google_bewertungen_analyse && (
+                                      <div>
+                                        <p className="font-semibold text-slate-500 uppercase tracking-wide mb-1">Bewertungsmuster</p>
+                                        <p className="text-slate-700 leading-relaxed">{a.google_bewertungen_analyse}</p>
+                                      </div>
+                                    )}
+
+                                    {/* ── Painpoints + Lösungen (2-spaltig) ── */}
+                                    {(a.painpoints || a.passende_loesungen?.length) && (
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        {/* Painpoints */}
+                                        {a.painpoints && (() => {
+                                          const kategorien = Object.entries(a.painpoints).filter(([, v]) => v?.length);
+                                          return kategorien.length > 0 ? (
+                                            <div>
+                                              <p className="font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Painpoints</p>
+                                              <ul className="space-y-1">
+                                                {kategorien.map(([key, punkte]) =>
+                                                  (punkte ?? []).map((p, i) => (
+                                                    <li key={`${key}-${i}`} className="flex gap-1.5 leading-relaxed">
+                                                      <span className="shrink-0">
+                                                        <span className="text-red-400">▸</span>{" "}
+                                                        <span className="text-slate-400">{PAINPOINT_LABELS[key] ?? key}:</span>
+                                                      </span>
+                                                      <span className="text-slate-700">{p}</span>
+                                                    </li>
+                                                  ))
+                                                )}
+                                              </ul>
+                                            </div>
+                                          ) : null;
+                                        })()}
+
+                                        {/* Passende Lösungen */}
+                                        {(a.passende_loesungen?.length ?? 0) > 0 && (
+                                          <div>
+                                            <p className="font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Passende Lösungen</p>
+                                            <ul className="space-y-1.5">
+                                              {a.passende_loesungen!.map((l, i) => (
+                                                <li key={i} className="leading-relaxed">
+                                                  <span className="font-medium text-violet-700">{l.leistung}</span>
+                                                  {l.begruendung && (
+                                                    <span className="text-slate-500"> – {l.begruendung}</span>
+                                                  )}
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* ── Verkaufsansätze ── */}
+                                    {(a.verkaufsansaetze?.length ?? 0) > 0 && (
+                                      <div>
+                                        <p className="font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Verkaufsansätze</p>
+                                        <div className="space-y-2">
+                                          {a.verkaufsansaetze!.slice(0, 3).map((v, i) => (
+                                            <div key={i} className="bg-white/70 rounded border border-violet-100 px-2.5 py-2 leading-relaxed">
+                                              <span className="text-red-500 font-medium">Problem:</span>{" "}
+                                              <span className="text-slate-700">{v.problem}</span>
+                                              {v.folge && (
+                                                <>
+                                                  {" "}<span className="text-slate-400">→</span>{" "}
+                                                  <span className="text-slate-500">{v.folge}</span>
+                                                </>
+                                              )}
+                                              {v.loesung && (
+                                                <>
+                                                  {" "}<span className="text-violet-500">→</span>{" "}
+                                                  <span className="text-violet-700 font-medium">{v.loesung}</span>
+                                                </>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* ── Cold-Call Hooks ── */}
+                                    {(a.hooks?.length ?? 0) > 0 && (
+                                      <div className="border-t border-violet-100 pt-2.5">
+                                        <p className="font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Cold-Call Einstiege</p>
+                                        <div className="space-y-1.5">
+                                          {a.hooks!.map((h, i) => (
+                                            <p key={i} className="italic text-slate-600 leading-relaxed">
+                                              &ldquo;{h}&rdquo;
+                                            </p>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* ── Top-Einstiegsangebot ── */}
+                                    {a.top_einstiegsangebot && (
+                                      <div className="flex items-start gap-2 bg-white/70 border border-violet-200 rounded px-2.5 py-2">
+                                        <span className="font-semibold text-violet-700 shrink-0">Empfehlung:</span>
+                                        <span className="text-slate-700">{a.top_einstiegsangebot}</span>
+                                      </div>
+                                    )}
+
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
                         </td>
                       </tr>
                     )}
