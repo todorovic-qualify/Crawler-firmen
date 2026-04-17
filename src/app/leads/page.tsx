@@ -39,6 +39,25 @@ interface Pagination {
   totalPages: number;
 }
 
+interface AnalysePainpoints {
+  marketing_leadgewinnung?: string[];
+  vertrieb_abschluss?: string[];
+  prozesse_zeitfresser?: string[];
+  digitalisierung_automatisierung?: string[];
+  kundenkommunikation?: string[];
+}
+
+interface AnalyseErgebnis {
+  zusammenfassung?: string;
+  painpoints?: AnalysePainpoints;
+  passende_loesungen?: { leistung: string; begruendung: string }[];
+  verkaufsansaetze?: { problem: string; folge: string; loesung: string }[];
+  hooks?: string[];
+  google_bewertungen_analyse?: string | null;
+  umsatzpotenzial?: "HOCH" | "MITTEL" | "NIEDRIG";
+  top_einstiegsangebot?: string;
+}
+
 type SortField = "leadScore" | "name" | "stadt" | "erstelltAm" | "lastCrawledAt";
 type SortDir = "asc" | "desc";
 
@@ -124,6 +143,9 @@ export default function LeadsSeite() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [recrawlingId, setRecrawlingId] = useState<string | null>(null);
   const [recrawlNachricht, setRecrawlNachricht] = useState<string | null>(null);
+  const [analysiertId, setAnalysiertId] = useState<string | null>(null);
+  const [analyseErgebnisse, setAnalyseErgebnisse] = useState<Record<string, AnalyseErgebnis>>({});
+  const [analyseNachricht, setAnalyseNachricht] = useState<{ typ: "erfolg" | "fehler"; text: string } | null>(null);
 
   // Filterbereich ein/aus
   const [zeigeFilter, setZeigeFilter] = useState(false);
@@ -210,6 +232,45 @@ export default function LeadsSeite() {
     } finally {
       setRecrawlingId(null);
       setTimeout(() => setRecrawlNachricht(null), 5000);
+    }
+  }
+
+  // ── KI-Vertriebsanalyse starten ─────────────────────────────────────────────
+
+  async function starteAnalyse(lead: Lead) {
+    setAnalysiertId(lead.id);
+    setAnalyseNachricht(null);
+    try {
+      const res = await fetch(`/api/leads/${lead.id}/analysis`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          website: lead.webseite ?? undefined,
+          googleDaten:
+            lead.bewertung != null
+              ? { bewertung: lead.bewertung, anzahl: lead.bewertungsanzahl }
+              : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAnalyseNachricht({
+          typ: "fehler",
+          text: data.error ?? "Analyse fehlgeschlagen",
+        });
+        return;
+      }
+      const ergebnis: AnalyseErgebnis = data.analyse ?? {};
+      setAnalyseErgebnisse((prev) => ({ ...prev, [lead.id]: ergebnis }));
+      setAnalyseNachricht({
+        typ: "erfolg",
+        text: `✓ ${lead.name} analysiert – Potenzial: ${ergebnis.umsatzpotenzial ?? "—"}`,
+      });
+    } catch (e) {
+      setAnalyseNachricht({ typ: "fehler", text: String(e) });
+    } finally {
+      setAnalysiertId(null);
+      setTimeout(() => setAnalyseNachricht(null), 8000);
     }
   }
 
@@ -421,6 +482,19 @@ export default function LeadsSeite() {
         </div>
       )}
 
+      {/* Analyse-Nachricht */}
+      {analyseNachricht && (
+        <div
+          className={`rounded-lg px-4 py-3 text-sm ${
+            analyseNachricht.typ === "erfolg"
+              ? "bg-violet-50 border border-violet-200 text-violet-700"
+              : "bg-red-50 border border-red-200 text-red-700"
+          }`}
+        >
+          {analyseNachricht.text}
+        </div>
+      )}
+
       {/* Fehlermeldung */}
       {fehler && (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
@@ -628,8 +702,99 @@ export default function LeadsSeite() {
                                   <>↻ Neu crawlen</>
                                 )}
                               </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  starteAnalyse(lead);
+                                }}
+                                disabled={analysiertId === lead.id || recrawlingId === lead.id}
+                                title="KI-Vertriebsanalyse erstellen"
+                                className="text-xs bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 px-3 py-1.5 rounded-lg disabled:opacity-50 disabled:cursor-wait flex items-center gap-1.5"
+                              >
+                                {analysiertId === lead.id ? (
+                                  <>
+                                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 100 16v-4l-3 3 3 3v-4a8 8 0 01-8-8z" />
+                                    </svg>
+                                    Analysiere…
+                                  </>
+                                ) : analyseErgebnisse[lead.id] ? (
+                                  <>✦ Neu analysieren</>
+                                ) : (
+                                  <>✦ Lead analysieren</>
+                                )}
+                              </button>
                             </div>
                           </div>
+                          {/* KI-Analyse-Ergebnis */}
+                          {analyseErgebnisse[lead.id] && (() => {
+                            const a = analyseErgebnisse[lead.id];
+                            const allePainpoints = Object.values(a.painpoints ?? {}).flat().filter(Boolean) as string[];
+                            const potenzialStyle =
+                              a.umsatzpotenzial === "HOCH"
+                                ? "bg-red-100 text-red-700"
+                                : a.umsatzpotenzial === "MITTEL"
+                                ? "bg-orange-100 text-orange-700"
+                                : "bg-slate-100 text-slate-600";
+                            return (
+                              <div className="mt-3 pt-3 border-t border-violet-100">
+                                <div className="bg-violet-50 border border-violet-100 rounded-lg px-3 py-3 space-y-2">
+                                  {/* Header */}
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide">
+                                      ✦ KI Vertriebsanalyse
+                                    </p>
+                                    {a.umsatzpotenzial && (
+                                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${potenzialStyle}`}>
+                                        Potenzial: {a.umsatzpotenzial}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {/* Zusammenfassung */}
+                                  {a.zusammenfassung && (
+                                    <p className="text-xs text-slate-600 leading-relaxed">
+                                      {a.zusammenfassung}
+                                    </p>
+                                  )}
+                                  {/* Top-Einstiegsangebot */}
+                                  {a.top_einstiegsangebot && (
+                                    <p className="text-xs">
+                                      <span className="font-semibold text-violet-600">Empfehlung: </span>
+                                      <span className="text-slate-700">{a.top_einstiegsangebot}</span>
+                                    </p>
+                                  )}
+                                  {/* Painpoints */}
+                                  {allePainpoints.length > 0 && (
+                                    <div>
+                                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                                        Painpoints
+                                      </p>
+                                      <ul className="space-y-0.5">
+                                        {allePainpoints.slice(0, 4).map((p, i) => (
+                                          <li key={i} className="text-xs text-slate-600 flex gap-1.5 leading-relaxed">
+                                            <span className="text-red-400 shrink-0 mt-0.5">▸</span>
+                                            {p}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                  {/* Hook */}
+                                  {a.hooks?.[0] && (
+                                    <div className="border-t border-violet-100 pt-2">
+                                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                                        Cold-Call Einstieg
+                                      </p>
+                                      <p className="text-xs text-slate-600 italic leading-relaxed">
+                                        &ldquo;{a.hooks[0]}&rdquo;
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </td>
                       </tr>
                     )}
