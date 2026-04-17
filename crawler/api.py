@@ -2,18 +2,19 @@
 FastAPI-Service: Stellt HTTP-Endpunkte für die Next.js-Frontend-Integration bereit.
 Läuft als separater Prozess auf Port 8000.
 
-Pipeline (4 Phasen):
+Pipeline (3 Phasen):
   1. Rohdaten sammeln (Overpass)
-  2. Duplikat-Matching gegen DB
-  3. Nur neue / veraltete Leads anreichern (Enrichment)
-  4. Scoring + Speichern + Suchauftrag verknüpfen
+  2. Duplikat-Matching gegen DB → nur neue Leads anreichern
+  3. Scoring + Speichern (bestehende Leads immer "wiederverwendet")
 """
 from __future__ import annotations
 
 import os
 import threading
+from contextlib import asynccontextmanager
 from typing import Optional, Any
 
+import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks
@@ -30,12 +31,10 @@ API_KEY = os.environ.get("CRAWLER_API_KEY", "")
 
 def _migriere_db() -> None:
     """
-    Fügt fehlende Spalten/Tabellen hinzu (IF NOT EXISTS → sicher idempotent).
-    Läuft beim App-Start, damit der Python-Service unabhängig von prisma db push
-    funktioniert.
+    Fügt fehlende Spalten/Tabellen hinzu, befüllt norm_name, bereinigt Duplikate.
+    Idempotent – sicher mehrfach ausführbar.
     """
     try:
-        import psycopg2
         db_url = os.environ.get("DATABASE_URL")
         if not db_url:
             logger.warning("DATABASE_URL nicht gesetzt – Migration übersprungen")
@@ -75,13 +74,42 @@ def _migriere_db() -> None:
             """)
 
             # ── Indexes für Performance ────────────────────────────────────────
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_externe_id    ON unternehmen(externe_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_norm          ON unternehmen(norm_name, norm_domain)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_stadt         ON unternehmen(stadt)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_lead_score    ON unternehmen(lead_score)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_crawl_status  ON unternehmen(crawl_status)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_sau_suchauftrag   ON suchauftrag_unternehmen(suchauftrag_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_sau_unternehmen   ON suchauftrag_unternehmen(unternehmen_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_externe_id   ON unternehmen(externe_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_norm         ON unternehmen(norm_name, norm_domain)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_stadt        ON unternehmen(stadt)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_lead_score   ON unternehmen(lead_score)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_unt_crawl_status ON unternehmen(crawl_status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sau_suchauftrag  ON suchauftrag_unternehmen(suchauftrag_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sau_unternehmen  ON suchauftrag_unternehmen(unternehmen_id)")
+
+            # ── norm_name für Legacy-Einträge befüllen ─────────────────────────
+            cur.execute("""
+                UPDATE unternehmen
+                SET norm_name = LOWER(TRIM(name))
+                WHERE norm_name IS NULL AND name IS NOT NULL
+            """)
+
+            # ── Duplikate entfernen (gleicher Name + Stadt, bestes behalten) ──
+            # Kriterium: hat externe_id > höherer Score > älterer Eintrag
+            cur.execute("""
+                DELETE FROM unternehmen
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY
+                                       LOWER(TRIM(name)),
+                                       LOWER(TRIM(COALESCE(stadt, '')))
+                                   ORDER BY
+                                       (CASE WHEN externe_id IS NOT NULL THEN 1 ELSE 0 END) DESC,
+                                       lead_score DESC,
+                                       erstellt_am ASC
+                               ) AS rn
+                        FROM unternehmen
+                    ) t
+                    WHERE rn > 1
+                )
+            """)
 
         conn.commit()
         conn.close()
@@ -89,7 +117,6 @@ def _migriere_db() -> None:
     except Exception as e:
         logger.warning(f"DB-Migration fehlgeschlagen (nicht kritisch): {e}")
 
-from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app_instance):
@@ -99,7 +126,7 @@ async def lifespan(app_instance):
 app = FastAPI(
     title="LeadScout Crawler API",
     description="Interner Crawler-Service für die LeadScout-Plattform",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
@@ -123,7 +150,6 @@ class CrawlerStartRequest(BaseModel):
     max_ergebnisse: int = 100
     enrichment: bool = True
     auftrag_id: Optional[str] = None
-    # Optionale Konfig aus dem Frontend (Einstellungen-Seite)
     crawler_config: Optional[dict[str, Any]] = None
     scoring_config: Optional[dict[str, Any]] = None
 
@@ -134,7 +160,6 @@ class JobStatus(BaseModel):
     gefunden: int = 0
     verarbeitet: int = 0
     fehler: Optional[str] = None
-    # Statistiken (neu)
     anzahl_neu: int = 0
     anzahl_wiederverwendet: int = 0
     anzahl_aktualisiert: int = 0
@@ -148,16 +173,15 @@ def prüfe_api_key(x_api_key: Optional[str] = Header(None)) -> None:
         raise HTTPException(status_code=401, detail="Ungültiger API-Key")
 
 
-# ── Hintergrund-Crawler (4-Phasen-Pipeline) ────────────────────────────────────
+# ── Hintergrund-Crawler (3-Phasen-Pipeline) ────────────────────────────────────
 
 def _starte_crawler_job(request: CrawlerStartRequest, auftrag_id: str) -> None:
     """
     Läuft in einem separaten Thread.
 
     Phase 1: Rohdaten sammeln (Overpass)
-    Phase 2: Duplikat-Matching (DB-Lookup für jeden Treffer)
-    Phase 3: Enrichment nur für neue/veraltete Leads
-    Phase 4: Scoring + Speichern + Statistiken
+    Phase 2: Duplikat-Matching – bestehende Leads IMMER wiederverwenden (kein Re-Crawl)
+    Phase 3: Scoring + Speichern
     """
     from crawler.sources.overpass import suche_unternehmen, KATEGORIE_OSM_MAP
     from crawler.enricher import reichere_an
@@ -165,7 +189,6 @@ def _starte_crawler_job(request: CrawlerStartRequest, auftrag_id: str) -> None:
     from crawler.db_writer import (
         verbinde, aktualisiere_suchauftrag,
         suche_duplikat, speichere_oder_aktualisiere_unternehmen,
-        ist_crawl_frisch,
     )
     from crawler.utils.http_utils import rate_limiter_setzen
 
@@ -179,18 +202,16 @@ def _starte_crawler_job(request: CrawlerStartRequest, auftrag_id: str) -> None:
         "uebersprungen": 0,
     }
 
-    # ── Crawler-Konfig aus Frontend anwenden ──────────────────────────────────
     if request.crawler_config:
         delay = request.crawler_config.get("delay_seconds")
         if isinstance(delay, (int, float)) and delay > 0:
             rate_limiter_setzen(float(delay))
-            logger.info(f"[Job {auftrag_id}] Rate-Limiter: {delay}s Verzögerung")
 
     kategorien = request.kategorien or list(KATEGORIE_OSM_MAP.keys())
 
     try:
         # ── Phase 1: Rohdaten sammeln ─────────────────────────────────────────
-        logger.info(f"[Job {auftrag_id}] ═══ Phase 1: Suche in '{request.ort}' ═══")
+        logger.info(f"[Job {auftrag_id}] Phase 1: Suche in '{request.ort}'")
         roh_liste = suche_unternehmen(
             ort=request.ort,
             radius_km=request.radius_km,
@@ -201,7 +222,7 @@ def _starte_crawler_job(request: CrawlerStartRequest, auftrag_id: str) -> None:
         logger.info(f"[Job {auftrag_id}] Roh-Treffer: {len(roh_liste)}")
 
         if not roh_liste:
-            logger.warning(f"[Job {auftrag_id}] Keine Treffer gefunden – Geocodierung prüfen!")
+            logger.warning(f"[Job {auftrag_id}] Keine Treffer – Geocodierung prüfen!")
             conn = verbinde()
             aktualisiere_suchauftrag(conn, auftrag_id, "abgeschlossen", 0, 0)
             conn.close()
@@ -209,90 +230,70 @@ def _starte_crawler_job(request: CrawlerStartRequest, auftrag_id: str) -> None:
             return
 
         # ── Phase 2: Duplikat-Matching ────────────────────────────────────────
-        logger.info(f"[Job {auftrag_id}] ═══ Phase 2: Duplikat-Matching ═══")
+        logger.info(f"[Job {auftrag_id}] Phase 2: Duplikat-Matching")
         conn = verbinde()
 
-        neu_liste = []       # Brauchen vollen Enrichment
-        frisch_liste = []    # Werden wiederverwendet (kein Re-Crawl)
-        veraltet_liste = []  # Brauchen Refresh-Enrichment
+        neu_liste = []        # Keine DB-Einträge → vollständig anreichern
+        bekannt_liste = []    # Bereits in DB → immer wiederverwenden, nie überschreiben
 
         for u in roh_liste:
             existierend = suche_duplikat(conn, u)
             if existierend is None:
                 neu_liste.append(u)
             else:
-                frisch = ist_crawl_frisch(
-                    last_crawled_at=existierend.get("last_crawled_at"),
-                    hat_webseite=existierend.get("hat_webseite", False),
-                    hat_telefon=existierend.get("hat_telefon", False),
-                    hat_email=existierend.get("hat_email", False),
-                )
-                if frisch:
-                    frisch_liste.append(u)
-                else:
-                    veraltet_liste.append(u)
+                bekannt_liste.append(u)
 
         conn.close()
 
         logger.info(
-            f"[Job {auftrag_id}] Matching-Ergebnis: "
-            f"{len(neu_liste)} neu | "
-            f"{len(frisch_liste)} wiederverwendet | "
-            f"{len(veraltet_liste)} zu aktualisieren"
+            f"[Job {auftrag_id}] Matching: "
+            f"{len(neu_liste)} neu | {len(bekannt_liste)} bereits bekannt (wiederverwendet)"
         )
+        _laufende_jobs[auftrag_id]["uebersprungen"] = len(bekannt_liste)
 
-        # ── Phase 3: Enrichment ───────────────────────────────────────────────
-        logger.info(f"[Job {auftrag_id}] ═══ Phase 3: Enrichment ═══")
-        enrichment_liste = neu_liste + veraltet_liste  # Nur diese werden gecrawlt
-        uebersprungen = len(frisch_liste)
-
-        logger.info(
-            f"[Job {auftrag_id}] Enrichment: {len(enrichment_liste)} Leads "
-            f"({len(neu_liste)} neu + {len(veraltet_liste)} veraltet) | "
-            f"{uebersprungen} Re-Crawls übersprungen"
-        )
-        _laufende_jobs[auftrag_id]["uebersprungen"] = uebersprungen
-
+        # ── Phase 3: Enrichment nur für neue Leads ────────────────────────────
+        logger.info(f"[Job {auftrag_id}] Phase 3: Enrichment ({len(neu_liste)} neue Leads)")
         if request.enrichment:
-            for i, u in enumerate(enrichment_liste):
+            for i, u in enumerate(neu_liste):
                 if u.hat_webseite:
                     try:
                         reichere_an(u)
-                        logger.debug(f"[Job {auftrag_id}] Enrichment {i+1}/{len(enrichment_liste)}: {u.name}")
+                        logger.debug(f"[Job {auftrag_id}] Enrichment {i+1}/{len(neu_liste)}: {u.name}")
                     except Exception as e:
                         logger.warning(f"[Job {auftrag_id}] Enrichment fehlgeschlagen {u.name}: {e}")
 
         # ── Phase 4: Scoring + Speichern ──────────────────────────────────────
-        logger.info(f"[Job {auftrag_id}] ═══ Phase 4: Scoring + Speichern ═══")
-
-        # Alle Leads (enrichment_liste + frisch_liste) bewerten und speichern
-        alle_leads = enrichment_liste + frisch_liste
+        logger.info(f"[Job {auftrag_id}] Phase 4: Scoring + Speichern")
         conn = verbinde()
 
         anzahl_neu = 0
         anzahl_wiederverwendet = 0
-        anzahl_aktualisiert = 0
         gespeichert = 0
 
-        for u in alle_leads:
+        # Neue Leads: bewerten + speichern
+        for u in neu_liste:
             try:
                 bewerte(u, konfig=request.scoring_config)
                 u_id, herkunft = speichere_oder_aktualisiere_unternehmen(conn, u, auftrag_id)
-
                 gespeichert += 1
-                _laufende_jobs[auftrag_id]["verarbeitet"] = gespeichert
-
                 if herkunft == "neu":
                     anzahl_neu += 1
-                elif herkunft == "wiederverwendet":
+                else:
                     anzahl_wiederverwendet += 1
-                elif herkunft == "aktualisiert":
-                    anzahl_aktualisiert += 1
-
+                _laufende_jobs[auftrag_id]["verarbeitet"] = gespeichert
                 _laufende_jobs[auftrag_id]["anzahl_neu"] = anzahl_neu
                 _laufende_jobs[auftrag_id]["anzahl_wiederverwendet"] = anzahl_wiederverwendet
-                _laufende_jobs[auftrag_id]["anzahl_aktualisiert"] = anzahl_aktualisiert
+            except Exception as e:
+                logger.error(f"[Job {auftrag_id}] DB-Fehler für {u.name}: {e}")
 
+        # Bekannte Leads: nur verknüpfen, KEINE Daten überschreiben
+        for u in bekannt_liste:
+            try:
+                u_id, herkunft = speichere_oder_aktualisiere_unternehmen(conn, u, auftrag_id)
+                gespeichert += 1
+                anzahl_wiederverwendet += 1
+                _laufende_jobs[auftrag_id]["verarbeitet"] = gespeichert
+                _laufende_jobs[auftrag_id]["anzahl_wiederverwendet"] = anzahl_wiederverwendet
             except Exception as e:
                 logger.error(f"[Job {auftrag_id}] DB-Fehler für {u.name}: {e}")
 
@@ -301,20 +302,15 @@ def _starte_crawler_job(request: CrawlerStartRequest, auftrag_id: str) -> None:
             len(roh_liste), gespeichert,
             anzahl_neu=anzahl_neu,
             anzahl_wiederverwendet=anzahl_wiederverwendet,
-            anzahl_aktualisiert=anzahl_aktualisiert,
+            anzahl_aktualisiert=0,
         )
         conn.close()
 
         _laufende_jobs[auftrag_id]["status"] = "abgeschlossen"
 
         logger.info(
-            f"[Job {auftrag_id}] ═══ Abgeschlossen ═══\n"
-            f"  Roh-Treffer:      {len(roh_liste)}\n"
-            f"  Neu angelegt:     {anzahl_neu}\n"
-            f"  Wiederverwendet:  {anzahl_wiederverwendet}\n"
-            f"  Aktualisiert:     {anzahl_aktualisiert}\n"
-            f"  Re-Crawls skip:   {uebersprungen}\n"
-            f"  Final gespeichert: {gespeichert}"
+            f"[Job {auftrag_id}] Abgeschlossen: "
+            f"{anzahl_neu} neu | {anzahl_wiederverwendet} wiederverwendet"
         )
 
     except Exception as e:
@@ -330,12 +326,73 @@ def _starte_crawler_job(request: CrawlerStartRequest, auftrag_id: str) -> None:
             pass
 
 
+# ── Force-Recrawl für einzelnen Lead ──────────────────────────────────────────
+
+def _recrawl_lead_job(lead_id: str) -> dict:
+    """Vollständiger Re-Crawl + Re-Scoring für einen einzelnen Lead."""
+    from crawler.models import Unternehmen
+    from crawler.enricher import reichere_an
+    from crawler.scorer import bewerte
+    from crawler.db_writer import verbinde, aktualisiere_unternehmen
+
+    conn = verbinde()
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT * FROM unternehmen WHERE id = %s", (lead_id,))
+        row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return {"fehler": f"Lead {lead_id} nicht gefunden"}
+
+    u = Unternehmen(
+        name=row["name"],
+        kategorie=row["kategorie"],
+        beschreibung=row["beschreibung"],
+        adresse=row["adresse"],
+        stadt=row["stadt"],
+        postleitzahl=row["postleitzahl"],
+        telefon=row["telefon"],
+        email=row["email"],
+        webseite=row["webseite"],
+        quelle_url=row["quelle_url"],
+        bewertung=row["bewertung"],
+        bewertungsanzahl=row.get("bewertungs_anzahl"),
+        oeffnungszeiten=row["oeffnungszeiten"],
+        instagram=row["instagram"],
+        facebook=row["facebook"],
+        linkedin=row["linkedin"],
+        whatsapp=row["whatsapp"],
+        hat_webseite=row["hat_webseite"],
+        hat_email=row["hat_email"],
+        hat_telefon=row["hat_telefon"],
+        externe_id=row.get("externe_id"),
+        crawl_status="aktualisiert",
+        quelle=row.get("quelle") or "overpass",
+    )
+
+    if u.hat_webseite and u.webseite:
+        try:
+            reichere_an(u)
+            logger.info(f"Recrawl Enrichment abgeschlossen: {u.name}")
+        except Exception as e:
+            logger.warning(f"Recrawl Enrichment fehlgeschlagen für {u.name}: {e}")
+
+    bewerte(u)
+
+    conn = verbinde()
+    aktualisiere_unternehmen(conn, lead_id, u)
+    conn.close()
+
+    logger.info(f"Recrawl abgeschlossen: {u.name} ({lead_id}) → Score {u.lead_score}")
+    return {"status": "abgeschlossen", "lead_id": lead_id, "lead_score": u.lead_score}
+
+
 # ── Endpunkte ─────────────────────────────────────────────────────────────────
 
 @app.get("/gesundheit")
 @app.get("/health")
 def gesundheitscheck():
-    return {"status": "ok", "service": "LeadScout Crawler v2"}
+    return {"status": "ok", "service": "LeadScout Crawler v2.1"}
 
 
 @app.post("/starten", response_model=JobStatus)
@@ -364,7 +421,6 @@ def crawler_starten(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"DB-Fehler: {e}")
 
-    # Hintergrund-Thread starten
     thread = threading.Thread(
         target=_starte_crawler_job,
         args=(request, auftrag_id),
@@ -383,7 +439,6 @@ def job_status(
     """Gibt den Status eines laufenden Jobs zurück."""
     prüfe_api_key(x_api_key)
 
-    # Erst in-memory prüfen
     if auftrag_id in _laufende_jobs:
         j = _laufende_jobs[auftrag_id]
         return JobStatus(
@@ -398,7 +453,6 @@ def job_status(
             uebersprungen=j.get("uebersprungen", 0),
         )
 
-    # Dann DB
     try:
         from crawler.db_writer import verbinde
         conn = verbinde()
@@ -427,6 +481,22 @@ def job_status(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/recrawl/{lead_id}")
+def recrawl_lead(
+    lead_id: str,
+    x_api_key: Optional[str] = Header(None),
+):
+    """
+    Forciert einen vollständigen erneuten Crawl für einen einzelnen Lead.
+    Blockierend – wartet bis Enrichment + Scoring abgeschlossen sind.
+    """
+    prüfe_api_key(x_api_key)
+    ergebnis = _recrawl_lead_job(lead_id)
+    if "fehler" in ergebnis:
+        raise HTTPException(status_code=404, detail=ergebnis["fehler"])
+    return ergebnis
 
 
 @app.get("/kategorien")

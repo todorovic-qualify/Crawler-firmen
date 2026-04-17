@@ -164,7 +164,8 @@ def suche_duplikat(conn, u: Unternehmen) -> Optional[dict]:
     Sucht nach einem existierenden Lead anhand folgender Priorität:
     1. Externe ID (OSM-Element-ID) – am zuverlässigsten
     2. Normalisierter Name + Domain
-    3. Normalisierter Name + Stadt (Fallback ohne Website)
+    3. Normalisierter Name + Stadt
+    4. LOWER(name) Fallback für Legacy-Records ohne norm_name
 
     Gibt dict mit Feldern des gefundenen Leads zurück, oder None.
     """
@@ -200,7 +201,7 @@ def suche_duplikat(conn, u: Unternehmen) -> Optional[dict]:
                 logger.debug(f"Duplikat via name+domain: {u.name} ({norm_domain}) → {row['id']}")
                 return dict(row)
 
-        # 3. Normalisierter Name + Stadt (Fallback)
+        # 3. Normalisierter Name + Stadt
         if norm_name and u.stadt:
             cur.execute(
                 """SELECT id, name, hat_webseite, hat_telefon, hat_email,
@@ -212,6 +213,34 @@ def suche_duplikat(conn, u: Unternehmen) -> Optional[dict]:
             row = cur.fetchone()
             if row:
                 logger.debug(f"Duplikat via name+stadt: {u.name} ({u.stadt}) → {row['id']}")
+                return dict(row)
+
+        # 4. LOWER(name) Fallback für Legacy-Records ohne norm_name
+        if u.name:
+            name_lower = u.name.lower().strip()
+            if u.stadt:
+                cur.execute(
+                    """SELECT id, name, hat_webseite, hat_telefon, hat_email,
+                              last_crawled_at, crawl_status, webseite, telefon, email
+                       FROM unternehmen
+                       WHERE LOWER(TRIM(name)) = %s
+                         AND LOWER(TRIM(COALESCE(stadt, ''))) = LOWER(%s)
+                       LIMIT 1""",
+                    (name_lower, u.stadt),
+                )
+            else:
+                cur.execute(
+                    """SELECT id, name, hat_webseite, hat_telefon, hat_email,
+                              last_crawled_at, crawl_status, webseite, telefon, email
+                       FROM unternehmen
+                       WHERE LOWER(TRIM(name)) = %s
+                         AND (stadt IS NULL OR TRIM(stadt) = '')
+                       LIMIT 1""",
+                    (name_lower,),
+                )
+            row = cur.fetchone()
+            if row:
+                logger.debug(f"Duplikat via LOWER(name) Fallback: {u.name} → {row['id']}")
                 return dict(row)
 
     return None
@@ -354,119 +383,30 @@ def speichere_oder_aktualisiere_unternehmen(
         return u_id, "neu"
 
     else:
-        # Existierender Lead gefunden
+        # ── WIEDERVERWENDET: Existierender Lead – Daten NIEMALS überschreiben ──
+        # Nur Dedup-Felder befüllen falls noch fehlend
         u_id = existierend["id"]
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE unternehmen SET
+                  externe_id = COALESCE(externe_id, %s),
+                  norm_name = COALESCE(norm_name, %s),
+                  norm_domain = COALESCE(norm_domain, %s),
+                  crawl_status = 'wiederverwendet',
+                  aktualisiert_am = %s
+                WHERE id = %s
+                """,
+                (u.externe_id, norm_name, norm_domain, jetzt, u_id),
+            )
+        conn.commit()
 
-        frisch = ist_crawl_frisch(
-            last_crawled_at=existierend.get("last_crawled_at"),
-            hat_webseite=existierend.get("hat_webseite", False),
-            hat_telefon=existierend.get("hat_telefon", False),
-            hat_email=existierend.get("hat_email", False),
-        )
-
-        if frisch:
-            # ── WIEDERVERWENDET: Keine Re-Anreicherung nötig ──────────────────
-            # Nur externe_id und norm-Felder aktualisieren falls fehlend
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE unternehmen SET
-                      externe_id = COALESCE(externe_id, %s),
-                      norm_name = COALESCE(norm_name, %s),
-                      norm_domain = COALESCE(norm_domain, %s),
-                      crawl_status = 'wiederverwendet',
-                      aktualisiert_am = %s
-                    WHERE id = %s
-                    """,
-                    (u.externe_id, norm_name, norm_domain, jetzt, u_id),
-                )
+        if auftrag_id:
+            verknuepfe_mit_suchauftrag(conn, u_id, auftrag_id, "wiederverwendet")
             conn.commit()
 
-            if auftrag_id:
-                verknuepfe_mit_suchauftrag(conn, u_id, auftrag_id, "wiederverwendet")
-                conn.commit()
-
-            logger.debug(f"[WIEDERVERWENDET] {u.name} → {u_id}")
-            return u_id, "wiederverwendet"
-
-        else:
-            # ── AKTUALISIERT: Re-Anreicherung wurde durchgeführt ──────────────
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE unternehmen SET
-                      email = COALESCE(%s, email),
-                      telefon = COALESCE(%s, telefon),
-                      webseite = COALESCE(%s, webseite),
-                      instagram = COALESCE(%s, instagram),
-                      facebook = COALESCE(%s, facebook),
-                      linkedin = COALESCE(%s, linkedin),
-                      whatsapp = COALESCE(%s, whatsapp),
-                      hat_webseite = %s,
-                      hat_email = %s,
-                      hat_telefon = %s,
-
-                      lead_score = %s,
-                      lead_temperatur = %s::\"LeadTemperatur\",
-                      webseite_bedarf_score = %s,
-                      automation_bedarf_score = %s,
-                      webseite_qualitaet_score = %s,
-
-                      wahrscheinliche_schmerzpunkte = %s,
-                      empfohlene_angebote = %s,
-                      verkaufs_winkel = %s,
-                      heiss_lead_grund = %s,
-                      score_erklaerung = %s,
-                      erstes_kontaktnachricht = %s,
-                      pitch_winkel = %s,
-
-                      entscheidungstraeger_name = COALESCE(%s, entscheidungstraeger_name),
-                      rechtlicher_name = COALESCE(%s, rechtlicher_name),
-                      zusammenfassung = COALESCE(%s, zusammenfassung),
-                      leistungen = COALESCE(%s, leistungen),
-
-                      externe_id = COALESCE(externe_id, %s),
-                      norm_name = COALESCE(norm_name, %s),
-                      norm_domain = COALESCE(norm_domain, %s),
-                      last_crawled_at = %s,
-                      crawl_status = 'aktualisiert',
-                      aktualisiert_am = %s
-                    WHERE id = %s
-                    """,
-                    (
-                        u.email, u.telefon, u.webseite,
-                        u.instagram, u.facebook, u.linkedin, u.whatsapp,
-                        u.hat_webseite, u.hat_email, u.hat_telefon,
-
-                        u.lead_score, u.lead_temperatur,
-                        u.webseite_bedarf_score, u.automation_bedarf_score,
-                        u.webseite_qualitaet_score,
-
-                        u.wahrscheinliche_schmerzpunkte, u.empfohlene_angebote,
-                        u.verkaufs_winkel, u.heiss_lead_grund, u.score_erklaerung,
-                        u.erstes_kontaktnachricht, u.pitch_winkel,
-
-                        u.entscheidungstraeger_name, u.rechtlicher_name,
-                        u.zusammenfassung, u.leistungen,
-
-                        u.externe_id, norm_name, norm_domain,
-                        jetzt, jetzt,
-                        u_id,
-                    ),
-                )
-
-                # Webseitenanalyse upsert
-                if u.webseiten_analyse:
-                    _upsert_webseiten_analyse(cur, u_id, u.webseiten_analyse, jetzt)
-
-            conn.commit()
-
-            if auftrag_id:
-                verknuepfe_mit_suchauftrag(conn, u_id, auftrag_id, "aktualisiert")
-                conn.commit()
-
-            logger.debug(f"[AKTUALISIERT] {u.name} → {u_id}")
-            return u_id, "aktualisiert"
+        logger.debug(f"[WIEDERVERWENDET] {u.name} → {u_id}")
+        return u_id, "wiederverwendet"
 
 
 # ── Rückwärtskompatible Funktion (für crawler.py CLI) ─────────────────────────

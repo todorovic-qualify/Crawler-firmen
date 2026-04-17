@@ -122,6 +122,8 @@ export default function LeadsSeite() {
   const [laden, setLaden]       = useState(false);
   const [fehler, setFehler]     = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [recrawlingId, setRecrawlingId] = useState<string | null>(null);
+  const [recrawlNachricht, setRecrawlNachricht] = useState<string | null>(null);
 
   // Filterbereich ein/aus
   const [zeigeFilter, setZeigeFilter] = useState(false);
@@ -187,6 +189,28 @@ export default function LeadsSeite() {
     setNurEmail(false); setNurTelefon(false); setMaxTage(0);
     setMinWebseiteBedarf(0); setMinAutomation(0);
     setPage(1);
+  }
+
+  // ── Recrawl ─────────────────────────────────────────────────────────────────
+
+  async function starteRecrawl(leadId: string, leadName: string) {
+    setRecrawlingId(leadId);
+    setRecrawlNachricht(null);
+    try {
+      const res = await fetch(`/api/leads/${leadId}/recrawl`, { method: "POST" });
+      if (res.ok) {
+        setRecrawlNachricht(`✓ ${leadName} wurde neu gecrawlt`);
+        await ladeDaten();
+      } else {
+        const d = await res.json();
+        setRecrawlNachricht(`Fehler: ${d.error ?? "Unbekannt"}`);
+      }
+    } catch (e) {
+      setRecrawlNachricht(`Fehler: ${String(e)}`);
+    } finally {
+      setRecrawlingId(null);
+      setTimeout(() => setRecrawlNachricht(null), 5000);
+    }
   }
 
   // ── Sortierung toggeln ───────────────────────────────────────────────────────
@@ -386,6 +410,17 @@ export default function LeadsSeite() {
         </div>
       )}
 
+      {/* Recrawl-Nachricht */}
+      {recrawlNachricht && (
+        <div className={`rounded-lg px-4 py-3 text-sm ${
+          recrawlNachricht.startsWith("✓")
+            ? "bg-green-50 border border-green-200 text-green-700"
+            : "bg-red-50 border border-red-200 text-red-700"
+        }`}>
+          {recrawlNachricht}
+        </div>
+      )}
+
       {/* Fehlermeldung */}
       {fehler && (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
@@ -572,6 +607,27 @@ export default function LeadsSeite() {
                                   Tel. kopieren
                                 </button>
                               )}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  starteRecrawl(lead.id, lead.name);
+                                }}
+                                disabled={recrawlingId === lead.id}
+                                title="Website neu crawlen und Daten aktualisieren"
+                                className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-lg disabled:opacity-50 disabled:cursor-wait flex items-center gap-1.5"
+                              >
+                                {recrawlingId === lead.id ? (
+                                  <>
+                                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 100 16v-4l-3 3 3 3v-4a8 8 0 01-8-8z" />
+                                    </svg>
+                                    Crawling…
+                                  </>
+                                ) : (
+                                  <>↻ Neu crawlen</>
+                                )}
+                              </button>
                             </div>
                           </div>
                         </td>
