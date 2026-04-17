@@ -92,6 +92,7 @@ model Unternehmen {
 
   // Beziehungen
   webseitenAnalyse      WebseitenAnalyse?
+  vertriebsAnalyse      VertriebsAnalyse?
   // Legacy: direkte Suchauftrag-Verknüpfung (erster Suchlauf der diesen Lead erzeugt hat)
   suchauftrag           Suchauftrag?     @relation(fields: [suchauftragId], references: [id])
   suchauftragId         String?          @map("suchauftrag_id")
@@ -140,6 +141,59 @@ model WebseitenAnalyse {
   erstelltAm               DateTime     @default(now()) @map("erstellt_am")
 
   @@map("webseiten_analyse")
+}
+
+// KI-gestützte Vertriebsanalyse (1:1 mit Unternehmen)
+model VertriebsAnalyse {
+  id                    String    @id @default(cuid())
+  unternehmenId         String    @unique @map("unternehmen_id")
+
+  // ── Strukturierte Analyse-Felder ──────────────────────────────────────────
+
+  // Schritt 1: Zusammenfassung (4-5 Sätze)
+  zusammenfassung       String?
+
+  // Schritt 2: Google-Bewertungsmuster
+  bewertungsAnalyse     String?   @map("bewertungs_analyse")
+
+  // Schritt 3: Painpoints (JSON-Array pro Kategorie)
+  // Format: { marketing_leadgewinnung: [...], vertrieb_abschluss: [...], ... }
+  painpoints            String?
+
+  // Schritt 4: Passende Lösungen (JSON-Array)
+  // Format: [{ leistung: "...", begruendung: "..." }]
+  loesungen             String?
+
+  // Schritt 5: Konkrete Verkaufsansätze (JSON-Array)
+  // Format: [{ problem: "...", folge: "...", loesung: "..." }]
+  verkaufsansaetze      String?
+
+  // Schritt 6: Personalisierte Hooks (JSON-Array)
+  hooks                 String?
+
+  // Zusammenfassung des Potenzials
+  umsatzpotenzial       String?   @map("umsatzpotenzial")    // HOCH | MITTEL | NIEDRIG
+  topEinstiegsangebot   String?   @map("top_einstiegsangebot")
+
+  // ── Vollständige Roh-Analyse ──────────────────────────────────────────────
+  // Komplettes JSON-Objekt von ki_analyst.analysiere() – für Vollzugriff/Debug
+  analyseJson           String?   @map("analyse_json")
+
+  // ── Meta-Informationen ────────────────────────────────────────────────────
+  analysiertAm          DateTime? @map("analysiert_am")
+  kiModell              String?   @map("ki_modell")           // z.B. "claude-sonnet-4-6" oder "fallback"
+  gecrawlteSeiten       String[]  @map("gecrawlte_seiten")    // Welche URLs wurden gecrawlt
+  googleDatenVorhanden  Boolean   @default(false) @map("google_daten_vorhanden")
+
+  // ── Relation ──────────────────────────────────────────────────────────────
+  unternehmen           Unternehmen @relation(fields: [unternehmenId], references: [id], onDelete: Cascade)
+
+  erstelltAm            DateTime  @default(now()) @map("erstellt_am")
+  aktualisiertAm        DateTime  @updatedAt @map("aktualisiert_am")
+
+  @@index([analysiertAm])
+  @@index([umsatzpotenzial])
+  @@map("vertriebs_analyse")
 }
 
 // Verknüpfungstabelle: Suchauftrag ↔ Unternehmen (many-to-many)

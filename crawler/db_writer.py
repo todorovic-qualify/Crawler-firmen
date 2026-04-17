@@ -514,6 +514,130 @@ def _speichere_webseiten_analyse(cur, u_id: str, a, jetzt: datetime) -> None:
     )
 
 
+def speichere_vertriebs_analyse(conn, unternehmen_id: str, ergebnis: dict) -> str:
+    """
+    Upsert der KI-Vertriebsanalyse in der vertriebs_analyse-Tabelle.
+
+    ergebnis: Rückgabe von ki_analyst.analysiere()
+    Gibt die ID des Datensatzes zurück.
+    """
+    import json as _json
+
+    a_id = _neue_id()
+    jetzt = _jetzt()
+
+    # Felder aus Ergebnis-Dict extrahieren (sicher mit .get)
+    zusammenfassung      = ergebnis.get("zusammenfassung")
+    bewertungs_analyse   = ergebnis.get("google_bewertungen_analyse")
+    painpoints           = _json.dumps(ergebnis.get("painpoints") or {}, ensure_ascii=False)
+    loesungen            = _json.dumps(ergebnis.get("passende_loesungen") or [], ensure_ascii=False)
+    verkaufsansaetze     = _json.dumps(ergebnis.get("verkaufsansaetze") or [], ensure_ascii=False)
+    hooks                = _json.dumps(ergebnis.get("hooks") or [], ensure_ascii=False)
+    umsatzpotenzial      = ergebnis.get("umsatzpotenzial")
+    top_angebot          = ergebnis.get("top_einstiegsangebot")
+    analyse_json         = _json.dumps(ergebnis, ensure_ascii=False)
+    ki_modell            = "fallback" if ergebnis.get("_fallback") else "claude-sonnet-4-6"
+    gecrawlte_seiten     = ergebnis.get("_gecrawlte_seiten") or []
+    google_vorhanden     = bool(ergebnis.get("_google_daten_vorhanden"))
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO vertriebs_analyse (
+              id, unternehmen_id,
+              zusammenfassung, bewertungs_analyse,
+              painpoints, loesungen, verkaufsansaetze, hooks,
+              umsatzpotenzial, top_einstiegsangebot,
+              analyse_json,
+              analysiert_am, ki_modell,
+              gecrawlte_seiten, google_daten_vorhanden,
+              erstellt_am, aktualisiert_am
+            ) VALUES (
+              %s, %s,
+              %s, %s,
+              %s, %s, %s, %s,
+              %s, %s,
+              %s,
+              %s, %s,
+              %s, %s,
+              %s, %s
+            )
+            ON CONFLICT (unternehmen_id) DO UPDATE SET
+              zusammenfassung      = EXCLUDED.zusammenfassung,
+              bewertungs_analyse   = EXCLUDED.bewertungs_analyse,
+              painpoints           = EXCLUDED.painpoints,
+              loesungen            = EXCLUDED.loesungen,
+              verkaufsansaetze     = EXCLUDED.verkaufsansaetze,
+              hooks                = EXCLUDED.hooks,
+              umsatzpotenzial      = EXCLUDED.umsatzpotenzial,
+              top_einstiegsangebot = EXCLUDED.top_einstiegsangebot,
+              analyse_json         = EXCLUDED.analyse_json,
+              analysiert_am        = EXCLUDED.analysiert_am,
+              ki_modell            = EXCLUDED.ki_modell,
+              gecrawlte_seiten     = EXCLUDED.gecrawlte_seiten,
+              google_daten_vorhanden = EXCLUDED.google_daten_vorhanden,
+              aktualisiert_am      = EXCLUDED.aktualisiert_am
+            RETURNING id
+            """,
+            (
+                a_id, unternehmen_id,
+                zusammenfassung, bewertungs_analyse,
+                painpoints, loesungen, verkaufsansaetze, hooks,
+                umsatzpotenzial, top_angebot,
+                analyse_json,
+                jetzt, ki_modell,
+                gecrawlte_seiten, google_vorhanden,
+                jetzt, jetzt,
+            ),
+        )
+        row = cur.fetchone()
+
+    conn.commit()
+    return row[0] if row else a_id
+
+
+def hole_vertriebs_analyse(conn, unternehmen_id: str) -> Optional[dict]:
+    """
+    Lädt die gespeicherte Vertriebsanalyse für einen Lead.
+    Gibt None zurück wenn noch keine Analyse vorhanden.
+    """
+    import json as _json
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT id, unternehmen_id,
+                   zusammenfassung, bewertungs_analyse,
+                   painpoints, loesungen, verkaufsansaetze, hooks,
+                   umsatzpotenzial, top_einstiegsangebot,
+                   analyse_json,
+                   analysiert_am, ki_modell,
+                   gecrawlte_seiten, google_daten_vorhanden,
+                   erstellt_am, aktualisiert_am
+            FROM vertriebs_analyse
+            WHERE unternehmen_id = %s
+            """,
+            (unternehmen_id,),
+        )
+        row = cur.fetchone()
+
+    if not row:
+        return None
+
+    result = dict(row)
+
+    # JSON-Felder deserialisieren
+    for feld in ("painpoints", "loesungen", "verkaufsansaetze", "hooks", "analyse_json"):
+        val = result.get(feld)
+        if val and isinstance(val, str):
+            try:
+                result[feld] = _json.loads(val)
+            except Exception:
+                pass
+
+    return result
+
+
 def _upsert_webseiten_analyse(cur, u_id: str, a, jetzt: datetime) -> None:
     """Fügt eine Webseitenanalyse ein oder aktualisiert sie."""
     a_id = _neue_id()

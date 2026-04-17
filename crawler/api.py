@@ -82,11 +82,45 @@ def _migriere_db() -> None:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_sau_suchauftrag  ON suchauftrag_unternehmen(suchauftrag_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_sau_unternehmen  ON suchauftrag_unternehmen(unternehmen_id)")
 
-            # ── ki_analyse-Spalte (JSON-Text) ──────────────────────────────────
+            # ── ki_analyse-Spalte (Rückwärtskompatibilität, veraltet) ───────────
             cur.execute("""
                 ALTER TABLE unternehmen
                   ADD COLUMN IF NOT EXISTS ki_analyse TEXT
             """)
+
+            # ── Vertriebs-Analyse-Tabelle (1:1 mit unternehmen) ───────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS vertriebs_analyse (
+                  id                       TEXT        PRIMARY KEY,
+                  unternehmen_id           TEXT        NOT NULL UNIQUE
+                                                       REFERENCES unternehmen(id) ON DELETE CASCADE,
+
+                  -- Strukturierte Analyse-Felder
+                  zusammenfassung          TEXT,
+                  bewertungs_analyse       TEXT,
+                  painpoints               TEXT,
+                  loesungen                TEXT,
+                  verkaufsansaetze         TEXT,
+                  hooks                    TEXT,
+                  umsatzpotenzial          TEXT,
+                  top_einstiegsangebot     TEXT,
+
+                  -- Vollständige Roh-Analyse
+                  analyse_json             TEXT,
+
+                  -- Meta
+                  analysiert_am            TIMESTAMPTZ,
+                  ki_modell                TEXT,
+                  gecrawlte_seiten         TEXT[]      NOT NULL DEFAULT '{}',
+                  google_daten_vorhanden   BOOLEAN     NOT NULL DEFAULT FALSE,
+
+                  erstellt_am              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  aktualisiert_am          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_va_unternehmen    ON vertriebs_analyse(unternehmen_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_va_analysiert_am  ON vertriebs_analyse(analysiert_am)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_va_umsatzpotenzial ON vertriebs_analyse(umsatzpotenzial)")
 
             # ── norm_name für Legacy-Einträge befüllen ─────────────────────────
             cur.execute("""
@@ -524,28 +558,34 @@ def analyze_lead(
     x_api_key: Optional[str] = Header(None),
 ):
     """
-    Führt KI-Verkaufsanalyse für einen Lead durch.
+    Führt KI-Verkaufsanalyse für einen Lead durch und speichert das Ergebnis.
 
-    1. Lädt Lead-Daten aus der DB
-    2. Deep-crawlt die Website
-    3. Ruft Google-Bewertungen ab
-    4. Generiert strukturierte Analyse via Claude API
-    5. Speichert das Ergebnis in ki_analyse-Spalte
+    Pipeline:
+    1. Lead-Stammdaten + WebseitenAnalyse aus DB laden
+    2. Website deep crawlen (ki_analyst)
+    3. Google-Bewertungen abrufen (ki_analyst)
+    4. Analyse via Claude API generieren
+    5. Strukturiert in vertriebs_analyse speichern (Upsert)
+    6. Roh-JSON in ki_analyse-Spalte (Rückwärtskompatibilität)
     """
     prüfe_api_key(x_api_key)
 
     from crawler.ki_analyst import analysiere
-    from crawler.db_writer import verbinde
+    from crawler.db_writer import verbinde, speichere_vertriebs_analyse
+    import json as _json
     import psycopg2.extras
 
-    # Lead-Stammdaten aus DB holen
+    # ── Lead-Kontext aus DB laden ─────────────────────────────────────────────
     conn = verbinde()
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT u.*, wa.webseite_qualitaet_score AS wqs,
-                   wa.cta_gefunden, wa.kontaktformular_gefunden,
-                   wa.buchungs_signal_gefunden, wa.whatsapp_gefunden,
+            SELECT u.*,
+                   wa.webseite_qualitaet_score,
+                   wa.cta_gefunden,
+                   wa.kontaktformular_gefunden,
+                   wa.buchungs_signal_gefunden,
+                   wa.whatsapp_gefunden,
                    wa.sieht_veraltet_aus
             FROM unternehmen u
             LEFT JOIN webseiten_analyse wa ON wa.unternehmen_id = u.id
@@ -560,11 +600,9 @@ def analyze_lead(
         raise HTTPException(status_code=404, detail=f"Lead {request.lead_id} nicht gefunden")
 
     lead_kontext = dict(row)
-
-    # Website aus Request oder DB
     website = request.website or lead_kontext.get("webseite")
 
-    # Analyse durchführen
+    # ── Analyse durchführen ───────────────────────────────────────────────────
     try:
         ergebnis = analysiere(
             website=website,
@@ -575,19 +613,50 @@ def analyze_lead(
         logger.error(f"Analyse fehlgeschlagen für Lead {request.lead_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Ergebnis in DB speichern
-    import json as _json
+    # ── Strukturiert in vertriebs_analyse speichern ───────────────────────────
     conn = verbinde()
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE unternehmen SET ki_analyse = %s, aktualisiert_am = NOW() WHERE id = %s",
-            (_json.dumps(ergebnis, ensure_ascii=False), request.lead_id),
-        )
-    conn.commit()
-    conn.close()
+    try:
+        analyse_id = speichere_vertriebs_analyse(conn, request.lead_id, ergebnis)
+        # Rückwärtskompatibilität: Roh-JSON auch in ki_analyse-Spalte
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE unternehmen SET ki_analyse = %s, aktualisiert_am = NOW() WHERE id = %s",
+                (_json.dumps(ergebnis, ensure_ascii=False), request.lead_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
-    logger.info(f"KI-Analyse gespeichert: Lead {request.lead_id}")
-    return {"lead_id": request.lead_id, "analyse": ergebnis}
+    logger.info(f"Vertriebsanalyse gespeichert: Lead {request.lead_id} → {analyse_id}")
+    return {"lead_id": request.lead_id, "analyse_id": analyse_id, "analyse": ergebnis}
+
+
+@app.get("/analyze-lead/{lead_id}")
+def hole_lead_analyse(
+    lead_id: str,
+    x_api_key: Optional[str] = Header(None),
+):
+    """
+    Gibt die gespeicherte Vertriebsanalyse für einen Lead zurück.
+    404 wenn noch keine Analyse vorhanden.
+    """
+    prüfe_api_key(x_api_key)
+
+    from crawler.db_writer import verbinde, hole_vertriebs_analyse
+
+    conn = verbinde()
+    try:
+        analyse = hole_vertriebs_analyse(conn, lead_id)
+    finally:
+        conn.close()
+
+    if not analyse:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Keine Vertriebsanalyse für Lead {lead_id} vorhanden",
+        )
+
+    return {"lead_id": lead_id, "analyse": analyse}
 
 
 if __name__ == "__main__":
