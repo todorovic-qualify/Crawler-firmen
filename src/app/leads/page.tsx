@@ -810,7 +810,7 @@ export default function LeadsSeite() {
                                     <div className="flex items-center gap-2">
                                       {analysiertDatum && (
                                         <span className="text-violet-400">
-                                          Analysiert: {fmtDatum(analysiertDatum)}
+                                          Zuletzt aktualisiert: {fmtDatum(analysiertDatum)}
                                         </span>
                                       )}
                                       {a.umsatzpotenzial && (
@@ -818,10 +818,37 @@ export default function LeadsSeite() {
                                           Potenzial: {a.umsatzpotenzial}
                                         </span>
                                       )}
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); starteAnalyse(lead); }}
+                                        disabled={analysiertId === lead.id || recrawlingId === lead.id}
+                                        title="Analyse aktualisieren"
+                                        className="ml-1 text-xs bg-violet-200 hover:bg-violet-300 text-violet-700 border border-violet-300 px-2 py-0.5 rounded disabled:opacity-50 disabled:cursor-wait flex items-center gap-1"
+                                      >
+                                        {analysiertId === lead.id ? (
+                                          <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 100 16v-4l-3 3 3 3v-4a8 8 0 01-8-8z" />
+                                          </svg>
+                                        ) : (
+                                          <span>⟳</span>
+                                        )}
+                                        Aktualisieren
+                                      </button>
                                     </div>
                                   </div>
 
-                                  <div className="px-3 py-3 space-y-3">
+                                  {/* Aktualisierungs-Banner */}
+                                  {analysiertId === lead.id && (
+                                    <div className="flex items-center gap-2 px-3 py-2 bg-violet-200/50 text-xs text-violet-700 border-b border-violet-200">
+                                      <svg className="animate-spin h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 100 16v-4l-3 3 3 3v-4a8 8 0 01-8-8z" />
+                                      </svg>
+                                      Analyse wird aktualisiert…
+                                    </div>
+                                  )}
+
+                                  <div className={`px-3 py-3 space-y-3 ${analysiertId === lead.id ? "opacity-40 pointer-events-none" : ""}`}>
 
                                     {/* ── Zusammenfassung ── */}
                                     {a.zusammenfassung && (
