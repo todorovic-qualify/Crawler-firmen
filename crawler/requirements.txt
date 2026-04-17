@@ -1,4 +1,5 @@
 httpx>=0.25.0
+anthropic>=0.28.0
 beautifulsoup4>=4.12.0
 lxml>=4.9.0,<5.2.0
 trafilatura>=1.6.0

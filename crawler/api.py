@@ -82,6 +82,12 @@ def _migriere_db() -> None:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_sau_suchauftrag  ON suchauftrag_unternehmen(suchauftrag_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_sau_unternehmen  ON suchauftrag_unternehmen(unternehmen_id)")
 
+            # ── ki_analyse-Spalte (JSON-Text) ──────────────────────────────────
+            cur.execute("""
+                ALTER TABLE unternehmen
+                  ADD COLUMN IF NOT EXISTS ki_analyse TEXT
+            """)
+
             # ── norm_name für Legacy-Einträge befüllen ─────────────────────────
             cur.execute("""
                 UPDATE unternehmen
@@ -152,6 +158,12 @@ class CrawlerStartRequest(BaseModel):
     auftrag_id: Optional[str] = None
     crawler_config: Optional[dict[str, Any]] = None
     scoring_config: Optional[dict[str, Any]] = None
+
+
+class AnalyseLeadRequest(BaseModel):
+    lead_id: str
+    website: Optional[str] = None
+    google_daten: Optional[dict] = None
 
 
 class JobStatus(BaseModel):
@@ -504,6 +516,78 @@ def kategorien_liste():
     """Gibt alle verfügbaren Kategorien zurück."""
     from crawler.sources.overpass import KATEGORIE_OSM_MAP
     return {"kategorien": list(KATEGORIE_OSM_MAP.keys())}
+
+
+@app.post("/analyze-lead")
+def analyze_lead(
+    request: AnalyseLeadRequest,
+    x_api_key: Optional[str] = Header(None),
+):
+    """
+    Führt KI-Verkaufsanalyse für einen Lead durch.
+
+    1. Lädt Lead-Daten aus der DB
+    2. Deep-crawlt die Website
+    3. Ruft Google-Bewertungen ab
+    4. Generiert strukturierte Analyse via Claude API
+    5. Speichert das Ergebnis in ki_analyse-Spalte
+    """
+    prüfe_api_key(x_api_key)
+
+    from crawler.ki_analyst import analysiere
+    from crawler.db_writer import verbinde
+    import psycopg2.extras
+
+    # Lead-Stammdaten aus DB holen
+    conn = verbinde()
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT u.*, wa.webseite_qualitaet_score AS wqs,
+                   wa.cta_gefunden, wa.kontaktformular_gefunden,
+                   wa.buchungs_signal_gefunden, wa.whatsapp_gefunden,
+                   wa.sieht_veraltet_aus
+            FROM unternehmen u
+            LEFT JOIN webseiten_analyse wa ON wa.unternehmen_id = u.id
+            WHERE u.id = %s
+            """,
+            (request.lead_id,),
+        )
+        row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Lead {request.lead_id} nicht gefunden")
+
+    lead_kontext = dict(row)
+
+    # Website aus Request oder DB
+    website = request.website or lead_kontext.get("webseite")
+
+    # Analyse durchführen
+    try:
+        ergebnis = analysiere(
+            website=website,
+            google_daten=request.google_daten,
+            lead_kontext=lead_kontext,
+        )
+    except Exception as e:
+        logger.error(f"Analyse fehlgeschlagen für Lead {request.lead_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Ergebnis in DB speichern
+    import json as _json
+    conn = verbinde()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE unternehmen SET ki_analyse = %s, aktualisiert_am = NOW() WHERE id = %s",
+            (_json.dumps(ergebnis, ensure_ascii=False), request.lead_id),
+        )
+    conn.commit()
+    conn.close()
+
+    logger.info(f"KI-Analyse gespeichert: Lead {request.lead_id}")
+    return {"lead_id": request.lead_id, "analyse": ergebnis}
 
 
 if __name__ == "__main__":
