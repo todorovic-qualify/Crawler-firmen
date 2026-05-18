@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gmail Aufräumen</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    body { background: #0f172a; font-family: 'Segoe UI', system-ui, sans-serif; }
+    .card { background: #1e293b; border: 1px solid #334155; }
+    .card-highlight { background: #1e293b; border: 1px solid #6366f1; box-shadow: 0 0 0 1px #6366f180; }
+    .screen { display: none; }
+    .screen.active { display: flex; }
+    .subject-item { border-left: 3px solid #6366f1; }
+    .btn-trash { background: #d97706; }
+    .btn-trash:hover { background: #b45309; }
+    .btn-delete { background: #dc2626; }
+    .btn-delete:hover { background: #b91c1c; }
+    .btn-skip { background: #334155; }
+    .btn-skip:hover { background: #475569; }
+    .progress-bar-inner { transition: width 0.4s ease; }
+    .fade-in { animation: fadeIn 0.3s ease; }
+    .slide-out { animation: slideOut 0.35s ease forwards; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes slideOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(60px); } }
+    .badge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+    .modal-overlay { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #1e293b; } ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    .step-num { width: 28px; height: 28px; border-radius: 50%; background: #6366f1; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 700; flex-shrink: 0; }
+    code { background: #0f172a; border: 1px solid #334155; padding: 2px 8px; border-radius: 4px; font-size: 0.85em; color: #a5f3fc; }
+  </style>
+</head>
+<body class="min-h-screen text-slate-100">
+
+<!-- ═══════════════════════════════════════════════════
+     SCREEN 1: Setup (credentials.json fehlt)
+═══════════════════════════════════════════════════ -->
+<div id="screen-setup" class="screen flex-col items-center justify-center min-h-screen px-4 py-12"
+  {% if has_creds_file or is_authed %}style="display:none"{% else %}style="display:flex"{% endif %}>
+  <div class="w-full max-w-2xl">
+    <div class="text-center mb-8">
+      <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-600 mb-4">
+        <i class="fab fa-google text-3xl"></i>
+      </div>
+      <h1 class="text-3xl font-bold mb-2">Gmail Aufräumen</h1>
+      <p class="text-slate-400">Einmalige Einrichtung erforderlich</p>
+    </div>
+
+    <div class="card rounded-2xl p-6 mb-4">
+      <h2 class="text-lg font-semibold mb-4 text-indigo-400"><i class="fas fa-key mr-2"></i>Google API Zugangsdaten einrichten</h2>
+      <p class="text-slate-400 text-sm mb-5">Du brauchst eine <code>credentials.json</code> Datei von Google. Das dauert etwa 5 Minuten:</p>
+
+      <div class="space-y-4">
+        <div class="flex gap-3">
+          <div class="step-num">1</div>
+          <div>
+            <p class="font-medium">Google Cloud Console öffnen</p>
+            <p class="text-slate-400 text-sm mt-1">Gehe zu <code>console.cloud.google.com</code> und melde dich an.</p>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <div class="step-num">2</div>
+          <div>
+            <p class="font-medium">Neues Projekt erstellen</p>
+            <p class="text-slate-400 text-sm mt-1">Klicke oben auf "Projekt auswählen" → "Neues Projekt" → Name vergeben → "Erstellen".</p>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <div class="step-num">3</div>
+          <div>
+            <p class="font-medium">Gmail API aktivieren</p>
+            <p class="text-slate-400 text-sm mt-1">Suche in der Suchleiste nach "Gmail API" → Auswählen → "Aktivieren".</p>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <div class="step-num">4</div>
+          <div>
+            <p class="font-medium">OAuth-Zustimmungsbildschirm konfigurieren</p>
+            <p class="text-slate-400 text-sm mt-1">"APIs & Dienste" → "OAuth-Zustimmungsbildschirm" → "Extern" → Name + E-Mail eintragen → Speichern. Dann unter "Testnutzer" deine Gmail-Adresse hinzufügen.</p>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <div class="step-num">5</div>
+          <div>
+            <p class="font-medium">OAuth-Client-ID erstellen</p>
+            <p class="text-slate-400 text-sm mt-1">"Anmeldedaten" → "Anmeldedaten erstellen" → "OAuth-Client-ID" → Typ: <strong>"Desktop-App"</strong> → Erstellen → <strong>"JSON herunterladen"</strong>.</p>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <div class="step-num">6</div>
+          <div>
+            <p class="font-medium">Datei ablegen</p>
+            <p class="text-slate-400 text-sm mt-1">Die heruntergeladene Datei umbenennen zu <code>credentials.json</code> und in den Ordner <code>gmail-cleanup/</code> legen (neben <code>app.py</code>).</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card rounded-2xl p-4 bg-amber-950 border-amber-700">
+      <p class="text-amber-300 text-sm"><i class="fas fa-rotate-right mr-2"></i>Nach dem Ablegen der Datei diese Seite neu laden.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     SCREEN 2: Login
+═══════════════════════════════════════════════════ -->
+<div id="screen-login" class="screen flex-col items-center justify-center min-h-screen px-4"
+  {% if is_authed or not has_creds_file %}style="display:none"{% else %}style="display:flex"{% endif %}>
+  <div class="w-full max-w-md text-center">
+    <div class="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-indigo-600 mb-6">
+      <i class="fab fa-google text-4xl"></i>
+    </div>
+    <h1 class="text-3xl font-bold mb-2">Gmail Aufräumen</h1>
+    <p class="text-slate-400 mb-8">Gruppiere und lösche E-Mails nach Absender</p>
+    <a href="/auth"
+       class="inline-flex items-center gap-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-8 py-4 rounded-2xl text-lg transition-all duration-200 shadow-lg shadow-indigo-900/40">
+      <i class="fab fa-google"></i>
+      Mit Google anmelden
+    </a>
+    <p class="text-slate-500 text-xs mt-6">Die App greift nur lesend und löschend auf dein Postfach zu.<br>Keine Daten werden gespeichert oder weitergegeben.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     SCREEN 3: Laden
+═══════════════════════════════════════════════════ -->
+<div id="screen-loading" class="screen flex-col items-center justify-center min-h-screen px-4"
+     style="display:none">
+  <div class="w-full max-w-md text-center">
+    <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-600 mb-6 animate-pulse">
+      <i class="fas fa-inbox text-3xl"></i>
+    </div>
+    <h2 class="text-2xl font-bold mb-2">E-Mails werden geladen</h2>
+    <p class="text-slate-400 mb-8" id="load-status">Verbinde mit Gmail…</p>
+
+    <div class="card rounded-2xl p-6">
+      <div class="flex justify-between text-sm text-slate-400 mb-2">
+        <span>Fortschritt</span>
+        <span id="load-count">0 / <span id="load-limit">500</span></span>
+      </div>
+      <div class="bg-slate-700 rounded-full h-3 overflow-hidden">
+        <div id="load-bar" class="progress-bar-inner h-3 bg-indigo-500 rounded-full" style="width:0%"></div>
+      </div>
+      <p class="text-slate-500 text-xs mt-3">Größere Postfächer dauern etwas länger — bitte warten.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     SCREEN 4: Review
+═══════════════════════════════════════════════════ -->
+<div id="screen-review" class="screen flex-col min-h-screen" style="display:none">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-20 border-b border-slate-800" style="background:#0f172a">
+    <div class="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <i class="fab fa-google text-indigo-400 text-xl"></i>
+        <span class="font-semibold">Gmail Aufräumen</span>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="text-sm text-slate-400">
+          Gruppe <span id="hdr-current" class="text-white font-semibold">1</span>
+          von <span id="hdr-total" class="text-white font-semibold">?</span>
+        </div>
+        <a href="/logout" class="text-slate-400 hover:text-white text-sm transition-colors">
+          <i class="fas fa-sign-out-alt"></i>
+        </a>
+      </div>
+    </div>
+    <!-- Gesamtfortschrittsbalken -->
+    <div class="h-1 bg-slate-800">
+      <div id="review-progress-bar" class="progress-bar-inner h-1 bg-indigo-500" style="width:0%"></div>
+    </div>
+  </header>
+
+  <!-- Stats-Leiste -->
+  <div class="border-b border-slate-800/60" style="background:#0f172a">
+    <div class="max-w-2xl mx-auto px-4 py-2 flex gap-4 text-xs text-slate-400">
+      <span><i class="fas fa-trash-alt text-amber-500 mr-1"></i>Papierkorb: <span id="stat-trash" class="text-amber-400 font-semibold">0</span></span>
+      <span><i class="fas fa-times-circle text-red-500 mr-1"></i>Gelöscht: <span id="stat-delete" class="text-red-400 font-semibold">0</span></span>
+      <span><i class="fas fa-forward text-slate-500 mr-1"></i>Übersprungen: <span id="stat-skip" class="text-slate-300 font-semibold">0</span></span>
+    </div>
+  </div>
+
+  <!-- Hauptinhalt -->
+  <main class="flex-1 max-w-2xl mx-auto w-full px-4 py-6">
+    <div id="group-card" class="card-highlight rounded-2xl p-6 fade-in">
+
+      <!-- Absender-Info -->
+      <div class="flex items-start gap-4 mb-5">
+        <div id="avatar" class="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold bg-indigo-700">
+          ?
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <h2 id="sender-name" class="text-xl font-bold truncate"></h2>
+            <span id="count-badge" class="badge bg-indigo-900 text-indigo-300"></span>
+          </div>
+          <p id="sender-email" class="text-slate-400 text-sm mt-0.5 truncate"></p>
+        </div>
+      </div>
+
+      <!-- Betreff-Liste -->
+      <div class="mb-6">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            <i class="fas fa-envelope-open-text mr-1"></i>Betreffzeilen
+          </p>
+          <span id="subjects-count" class="text-xs text-slate-500"></span>
+        </div>
+        <div id="subjects-list" class="space-y-1 max-h-64 overflow-y-auto pr-1"></div>
+      </div>
+
+      <!-- Aktionsbuttons -->
+      <div class="grid grid-cols-3 gap-3">
+        <button onclick="doAction('skip')"
+          class="btn-skip text-white font-semibold py-3 px-4 rounded-xl transition-all duration-150 flex flex-col items-center gap-1 hover:scale-105 active:scale-95">
+          <i class="fas fa-forward text-lg"></i>
+          <span class="text-xs">Überspringen</span>
+        </button>
+        <button onclick="doAction('trash')"
+          class="btn-trash text-white font-semibold py-3 px-4 rounded-xl transition-all duration-150 flex flex-col items-center gap-1 hover:scale-105 active:scale-95">
+          <i class="fas fa-trash-alt text-lg"></i>
+          <span class="text-xs">In Papierkorb</span>
+        </button>
+        <button onclick="confirmDelete()"
+          class="btn-delete text-white font-semibold py-3 px-4 rounded-xl transition-all duration-150 flex flex-col items-center gap-1 hover:scale-105 active:scale-95">
+          <i class="fas fa-times-circle text-lg"></i>
+          <span class="text-xs">Endgültig löschen</span>
+        </button>
+      </div>
+
+      <!-- Keyboard Hints -->
+      <div class="flex gap-4 justify-center mt-4 text-xs text-slate-600">
+        <span><kbd class="bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">→</kbd> überspringen</span>
+        <span><kbd class="bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">T</kbd> Papierkorb</span>
+        <span><kbd class="bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">D</kbd> löschen</span>
+      </div>
+    </div>
+
+    <!-- Loading-Overlay während Aktion -->
+    <div id="action-loading" class="hidden fixed inset-0 flex items-center justify-center z-50">
+      <div class="card rounded-2xl p-6 text-center shadow-2xl">
+        <i class="fas fa-circle-notch fa-spin text-3xl text-indigo-400 mb-3"></i>
+        <p id="action-loading-text" class="text-slate-300">Wird verarbeitet…</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     SCREEN 5: Fertig
+═══════════════════════════════════════════════════ -->
+<div id="screen-done" class="screen flex-col items-center justify-center min-h-screen px-4"
+     style="display:none">
+  <div class="w-full max-w-md text-center">
+    <div class="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-emerald-600 mb-6">
+      <i class="fas fa-check text-4xl"></i>
+    </div>
+    <h2 class="text-3xl font-bold mb-2">Postfach aufgeräumt!</h2>
+    <p class="text-slate-400 mb-8">Alle Gruppen wurden bearbeitet.</p>
+
+    <div class="card rounded-2xl p-6 mb-6 text-left space-y-3">
+      <div class="flex justify-between items-center py-2 border-b border-slate-700">
+        <span class="text-slate-400"><i class="fas fa-trash-alt text-amber-500 mr-2"></i>In Papierkorb verschoben</span>
+        <span id="done-trash" class="text-amber-400 font-bold text-lg">0</span>
+      </div>
+      <div class="flex justify-between items-center py-2 border-b border-slate-700">
+        <span class="text-slate-400"><i class="fas fa-times-circle text-red-500 mr-2"></i>Endgültig gelöscht</span>
+        <span id="done-delete" class="text-red-400 font-bold text-lg">0</span>
+      </div>
+      <div class="flex justify-between items-center py-2">
+        <span class="text-slate-400"><i class="fas fa-forward text-slate-500 mr-2"></i>Übersprungen</span>
+        <span id="done-skip" class="text-slate-300 font-bold text-lg">0</span>
+      </div>
+    </div>
+
+    <div class="flex gap-3">
+      <button onclick="restart()"
+        class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 px-6 rounded-xl transition-colors">
+        <i class="fas fa-redo mr-2"></i>Neu starten
+      </button>
+      <a href="/logout"
+        class="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 px-6 rounded-xl transition-colors text-center">
+        <i class="fas fa-sign-out-alt mr-2"></i>Abmelden
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     MODAL: Bestätigung Endgültig Löschen
+═══════════════════════════════════════════════════ -->
+<div id="delete-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="modal-overlay absolute inset-0" onclick="closeModal()"></div>
+  <div class="card rounded-2xl p-6 relative z-10 max-w-sm w-full shadow-2xl border-red-800">
+    <div class="flex items-center gap-3 mb-4">
+      <div class="w-10 h-10 rounded-xl bg-red-900 flex items-center justify-center">
+        <i class="fas fa-exclamation-triangle text-red-400"></i>
+      </div>
+      <h3 class="text-lg font-bold">Endgültig löschen?</h3>
+    </div>
+    <p class="text-slate-400 text-sm mb-2">
+      Diese E-Mails werden <strong class="text-red-400">unwiderruflich gelöscht</strong> — sie landen nicht im Papierkorb.
+    </p>
+    <p class="text-slate-400 text-sm mb-6">
+      Absender: <span id="modal-sender" class="text-white font-medium"></span><br>
+      Anzahl: <span id="modal-count" class="text-red-400 font-bold"></span> E-Mails
+    </p>
+    <div class="flex gap-3">
+      <button onclick="closeModal()"
+        class="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2.5 rounded-xl transition-colors">
+        Abbrechen
+      </button>
+      <button onclick="doAction('delete')"
+        class="flex-1 btn-delete text-white font-semibold py-2.5 rounded-xl transition-colors">
+        <i class="fas fa-times-circle mr-2"></i>Ja, löschen
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     SCREEN: Startseite (angemeldet, noch nicht geladen)
+═══════════════════════════════════════════════════ -->
+<div id="screen-start" class="screen flex-col items-center justify-center min-h-screen px-4"
+  {% if not is_authed %}style="display:none"{% else %}style="display:flex"{% endif %}>
+  <div class="w-full max-w-md text-center">
+    <div class="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-indigo-600 mb-6">
+      <i class="fas fa-broom text-4xl"></i>
+    </div>
+    <h1 class="text-3xl font-bold mb-2">Bereit zum Aufräumen</h1>
+    <p class="text-slate-400 mb-8">Wie viele E-Mails sollen analysiert werden?</p>
+
+    <div class="card rounded-2xl p-6 mb-6 text-left">
+      <label class="block text-sm font-medium text-slate-300 mb-3">Anzahl E-Mails (Posteingang)</label>
+      <div class="grid grid-cols-4 gap-2 mb-4">
+        <button onclick="setLimit(200)" class="limit-btn bg-slate-700 hover:bg-indigo-700 text-white py-2 rounded-xl text-sm font-medium transition-colors">200</button>
+        <button onclick="setLimit(500)" class="limit-btn bg-indigo-600 text-white py-2 rounded-xl text-sm font-medium transition-colors">500</button>
+        <button onclick="setLimit(1000)" class="limit-btn bg-slate-700 hover:bg-indigo-700 text-white py-2 rounded-xl text-sm font-medium transition-colors">1.000</button>
+        <button onclick="setLimit(5000)" class="limit-btn bg-slate-700 hover:bg-indigo-700 text-white py-2 rounded-xl text-sm font-medium transition-colors">5.000</button>
+      </div>
+      <p class="text-slate-500 text-xs">Mehr E-Mails = längere Ladezeit. 500 ist ein guter Startpunkt.</p>
+    </div>
+
+    <button onclick="startLoading()"
+      class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-8 rounded-2xl text-lg transition-all shadow-lg shadow-indigo-900/40 hover:scale-105 active:scale-95">
+      <i class="fas fa-play mr-2"></i>E-Mails laden &amp; analysieren
+    </button>
+    <a href="/logout" class="block mt-4 text-slate-500 hover:text-slate-300 text-sm transition-colors">
+      <i class="fas fa-sign-out-alt mr-1"></i>Abmelden
+    </a>
+  </div>
+</div>
+
+<script>
+  // ─── State ────────────────────────────────────────
+  let groups = [];
+  let currentIndex = 0;
+  let limit = 500;
+  let stats = { trash: 0, delete: 0, skip: 0 };
+
+  // ─── Hilfsfunktionen ──────────────────────────────
+  function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.style.display = 'none');
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'flex';
+  }
+
+  function setLimit(n) {
+    limit = n;
+    document.querySelectorAll('.limit-btn').forEach(btn => {
+      btn.className = btn.className.replace('bg-indigo-600', 'bg-slate-700');
+    });
+    event.target.className = event.target.className.replace('bg-slate-700', 'bg-indigo-600');
+  }
+
+  function parseSender(raw) {
+    const m = raw.match(/^"?([^"<]+?)"?\s*<([^>]+)>/);
+    if (m) return { name: m[1].trim(), email: m[2].trim() };
+    if (raw.includes('@')) return { name: raw.split('@')[0], email: raw };
+    return { name: raw, email: '' };
+  }
+
+  function avatarLetter(name) {
+    return (name || '?')[0].toUpperCase();
+  }
+
+  const COLORS = ['bg-indigo-700','bg-violet-700','bg-sky-700','bg-teal-700','bg-emerald-700','bg-rose-700','bg-amber-700','bg-pink-700'];
+  function avatarColor(email) {
+    let h = 0;
+    for (let c of email) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
+    return COLORS[h % COLORS.length];
+  }
+
+  // ─── Laden starten ────────────────────────────────
+  function startLoading() {
+    showScreen('screen-loading');
+    document.getElementById('load-limit').textContent = limit;
+    document.getElementById('load-status').textContent = 'Verbinde mit Gmail…';
+
+    const es = new EventSource(`/api/stream?limit=${limit}`);
+
+    es.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+
+      if (data.type === 'start') {
+        document.getElementById('load-status').textContent = 'Lade E-Mails…';
+      }
+      else if (data.type === 'progress') {
+        const pct = Math.round((data.loaded / limit) * 100);
+        document.getElementById('load-bar').style.width = pct + '%';
+        document.getElementById('load-count').innerHTML =
+          `${data.loaded} / <span id="load-limit">${limit}</span>`;
+        document.getElementById('load-status').textContent =
+          `${data.loaded} E-Mails analysiert…`;
+      }
+      else if (data.type === 'done') {
+        es.close();
+        groups = data.groups;
+        currentIndex = 0;
+        stats = { trash: 0, delete: 0, skip: 0 };
+        if (groups.length === 0) {
+          showScreen('screen-done');
+        } else {
+          showScreen('screen-review');
+          renderGroup();
+        }
+      }
+      else if (data.type === 'error') {
+        es.close();
+        alert('Fehler: ' + data.message);
+        showScreen('screen-start');
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      alert('Verbindungsfehler. Bitte erneut versuchen.');
+      showScreen('screen-start');
+    };
+  }
+
+  // ─── Gruppe rendern ───────────────────────────────
+  function renderGroup() {
+    if (currentIndex >= groups.length) {
+      showDone();
+      return;
+    }
+
+    const g = groups[currentIndex];
+    const { name, email } = parseSender(g.sender);
+
+    // Header
+    document.getElementById('hdr-current').textContent = currentIndex + 1;
+    document.getElementById('hdr-total').textContent = groups.length;
+    const pct = Math.round((currentIndex / groups.length) * 100);
+    document.getElementById('review-progress-bar').style.width = pct + '%';
+
+    // Avatar
+    const av = document.getElementById('avatar');
+    av.className = `flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold ${avatarColor(email || name)}`;
+    av.textContent = avatarLetter(name);
+
+    // Sender
+    document.getElementById('sender-name').textContent = name;
+    document.getElementById('sender-email').textContent = email || g.sender;
+    document.getElementById('count-badge').textContent = `${g.count} E-Mail${g.count !== 1 ? 's' : ''}`;
+
+    // Betreffzeilen
+    const list = document.getElementById('subjects-list');
+    list.innerHTML = '';
+    const subjects = g.subjects.slice(0, 60);
+    subjects.forEach(s => {
+      const div = document.createElement('div');
+      div.className = 'subject-item bg-slate-800/60 rounded-lg px-3 py-2 text-sm text-slate-300 truncate';
+      div.title = s;
+      div.textContent = s;
+      list.appendChild(div);
+    });
+    document.getElementById('subjects-count').textContent =
+      g.subjects.length > 60 ? `(${g.subjects.length} gesamt, 60 angezeigt)` : `${g.subjects.length} eindeutige Betreffzeilen`;
+
+    // Stats
+    updateStats();
+
+    // Animation
+    const card = document.getElementById('group-card');
+    card.classList.remove('fade-in');
+    void card.offsetWidth;
+    card.classList.add('fade-in');
+  }
+
+  function updateStats() {
+    document.getElementById('stat-trash').textContent = stats.trash;
+    document.getElementById('stat-delete').textContent = stats.delete;
+    document.getElementById('stat-skip').textContent = stats.skip;
+  }
+
+  // ─── Aktionen ─────────────────────────────────────
+  async function doAction(type) {
+    closeModal();
+    const g = groups[currentIndex];
+    if (!g) return;
+
+    if (type === 'skip') {
+      stats.skip++;
+      nextGroup();
+      return;
+    }
+
+    // Papierkorb oder Löschen
+    const endpoint = type === 'trash' ? '/api/trash' : '/api/delete';
+    const loadingText = type === 'trash'
+      ? `${g.count} E-Mails werden in den Papierkorb verschoben…`
+      : `${g.count} E-Mails werden endgültig gelöscht…`;
+
+    document.getElementById('action-loading-text').textContent = loadingText;
+    document.getElementById('action-loading').classList.remove('hidden');
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: g.ids })
+      });
+      const data = await res.json();
+      if (data.success) {
+        stats[type] += data.count;
+      } else {
+        alert('Fehler: ' + (data.error || 'Unbekannt'));
+      }
+    } catch (err) {
+      alert('Netzwerkfehler: ' + err.message);
+    } finally {
+      document.getElementById('action-loading').classList.add('hidden');
+      nextGroup();
+    }
+  }
+
+  function nextGroup() {
+    const card = document.getElementById('group-card');
+    card.classList.add('slide-out');
+    setTimeout(() => {
+      card.classList.remove('slide-out');
+      currentIndex++;
+      renderGroup();
+    }, 350);
+  }
+
+  function confirmDelete() {
+    const g = groups[currentIndex];
+    const { name, email } = parseSender(g.sender);
+    document.getElementById('modal-sender').textContent = name + (email ? ` <${email}>` : '');
+    document.getElementById('modal-count').textContent = g.count;
+    document.getElementById('delete-modal').classList.remove('hidden');
+  }
+
+  function closeModal() {
+    document.getElementById('delete-modal').classList.add('hidden');
+  }
+
+  // ─── Fertig ───────────────────────────────────────
+  function showDone() {
+    document.getElementById('done-trash').textContent = stats.trash;
+    document.getElementById('done-delete').textContent = stats.delete;
+    document.getElementById('done-skip').textContent = stats.skip;
+    showScreen('screen-done');
+  }
+
+  function restart() {
+    groups = [];
+    currentIndex = 0;
+    stats = { trash: 0, delete: 0, skip: 0 };
+    showScreen('screen-start');
+  }
+
+  // ─── Tastaturkürzel ───────────────────────────────
+  document.addEventListener('keydown', (e) => {
+    const review = document.getElementById('screen-review');
+    if (review.style.display === 'none') return;
+    if (document.getElementById('delete-modal').classList.contains('hidden') === false) return;
+    if (e.key === 'ArrowRight') doAction('skip');
+    else if (e.key === 't' || e.key === 'T') doAction('trash');
+    else if (e.key === 'd' || e.key === 'D') confirmDelete();
+  });
+</script>
+</body>
+</html>
